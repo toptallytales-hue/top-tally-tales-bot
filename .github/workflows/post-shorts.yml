@@ -17,6 +17,7 @@ on:
 jobs:
   post-shorts:
     runs-on: ubuntu-latest
+    environment: top-tally-tales-bot   # ← ADD THIS LINE
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
