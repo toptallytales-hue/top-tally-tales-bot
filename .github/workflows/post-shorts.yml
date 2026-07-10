@@ -1,26 +1,17 @@
-name: "Post Daily Sports Shorts"
+name: "TopTallyTales Short"
 
 on:
-  schedule:
-    - cron: "23 * * * *"
   workflow_dispatch:
-    inputs:
-      approve:
-        description: 'Approve and post?'
-        required: true
-        default: 'no'
-        type: choice
-        options:
-          - 'yes'
-          - 'no'
 
 jobs:
-  post-shorts:
+  short:
     runs-on: ubuntu-latest
-    environment: top-tally-tales-bot   # ← ADD THIS LINE
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
+      - name: Install FFmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -28,23 +19,14 @@ jobs:
           python-version: '3.10'
 
       - name: Install dependencies
-        run: |
-          pip install feedparser requests pillow gTTS google-api-python-client google-auth-oauthlib
-          sudo apt-get update
-          sudo apt-get install -y ffmpeg
+        run: pip install edge-tts feedparser requests Pillow google-auth google-api-python-client
 
-      - name: Debug secrets (check if set)
-        run: |
-          echo "YOUTUBE_CLIENT_ID is set: ${{ secrets.YOUTUBE_CLIENT_ID != '' }}"
-          echo "YOUTUBE_CLIENT_SECRET is set: ${{ secrets.YOUTUBE_CLIENT_SECRET != '' }}"
-          echo "YOUTUBE_REFRESH_TOKEN is set: ${{ secrets.YOUTUBE_REFRESH_TOKEN != '' }}"
-          echo "YOUTUBE_CHANNEL_ID is set: ${{ secrets.YOUTUBE_CHANNEL_ID != '' }}"
-
-      - name: Run the YouTube Shorts automation
+      - name: Build and upload the Short
         env:
-          APPROVE: ${{ github.event.inputs.approve }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
           YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
           YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
-          YOUTUBE_CHANNEL_ID: ${{ secrets.YOUTUBE_CHANNEL_ID }}
-        run: python post_news.py
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: python build_yt_short.py
