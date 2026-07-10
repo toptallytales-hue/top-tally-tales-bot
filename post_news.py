@@ -2,6 +2,7 @@ import os
 import sys
 import json
 import subprocess
+import re
 import feedparser
 import requests
 from datetime import datetime
@@ -13,6 +14,22 @@ YOUTUBE_CLIENT_ID = os.environ.get("YOUTUBE_CLIENT_ID")
 YOUTUBE_CLIENT_SECRET = os.environ.get("YOUTUBE_CLIENT_SECRET")
 YOUTUBE_REFRESH_TOKEN = os.environ.get("YOUTUBE_REFRESH_TOKEN")
 YOUTUBE_CHANNEL_ID = os.environ.get("YOUTUBE_CHANNEL_ID")
+
+# === DEBUG: Print secret status ===
+print(f"🔍 YOUTUBE_CLIENT_ID: {'SET' if YOUTUBE_CLIENT_ID else 'NOT SET'}")
+print(f"🔍 YOUTUBE_CLIENT_SECRET: {'SET' if YOUTUBE_CLIENT_SECRET else 'NOT SET'}")
+print(f"🔍 YOUTUBE_REFRESH_TOKEN: {'SET' if YOUTUBE_REFRESH_TOKEN else 'NOT SET'}")
+print(f"🔍 YOUTUBE_CHANNEL_ID: {'SET' if YOUTUBE_CHANNEL_ID else 'NOT SET'}")
+
+# === HELPER: Clean HTML Tags ===
+def clean_html(text):
+    """Remove HTML tags from text."""
+    # Remove HTML tags
+    clean = re.compile('<.*?>')
+    text = re.sub(clean, '', text)
+    # Remove extra whitespace
+    text = ' '.join(text.split())
+    return text
 
 # === FETCH NEWS ===
 def fetch_news():
@@ -28,8 +45,8 @@ def fetch_news():
             feed = feedparser.parse(feed_url)
             for entry in feed.entries[:1]:
                 articles.append({
-                    'title': entry.title,
-                    'summary': entry.get('summary', entry.get('description', ''))[:200],
+                    'title': clean_html(entry.title),
+                    'summary': clean_html(entry.get('summary', entry.get('description', '')))[:200],
                     'link': entry.link,
                 })
         except:
@@ -132,6 +149,9 @@ def upload_to_youtube(video_path, title, description):
         print("❌ YouTube credentials not configured!")
         return False
     
+    # Clean the description (remove HTML tags)
+    clean_description = clean_html(description)
+    
     try:
         from google.oauth2.credentials import Credentials
         from googleapiclient.discovery import build
@@ -155,8 +175,8 @@ def upload_to_youtube(video_path, title, description):
             part="snippet,status",
             body={
                 "snippet": {
-                    "title": title[:100],
-                    "description": description[:5000],
+                    "title": clean_html(title[:100]),
+                    "description": clean_description[:5000],
                     "categoryId": "22",  # News & Politics
                     "tags": ["TopTallyTales", "News", "Trending", "Shorts"]
                 },
