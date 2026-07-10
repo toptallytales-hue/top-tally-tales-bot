@@ -4,6 +4,7 @@ on:
 jobs:
   short:
     runs-on: ubuntu-latest
+    environment: production        # 👈 add this — use YOUR environment's exact name
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
