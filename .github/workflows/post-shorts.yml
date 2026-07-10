@@ -2,8 +2,8 @@ name: "Post Daily Sports Shorts"
 
 on:
   schedule:
-    - cron: "23 * * * *"   # Runs at minute 23 of every hour
-  workflow_dispatch:        # Allows manual run
+    - cron: "23 * * * *"
+  workflow_dispatch:
     inputs:
       approve:
         description: 'Approve and post?'
@@ -31,6 +31,13 @@ jobs:
           pip install feedparser requests pillow gTTS google-api-python-client google-auth-oauthlib
           sudo apt-get update
           sudo apt-get install -y ffmpeg
+
+      - name: Debug secrets (check if set)
+        run: |
+          echo "YOUTUBE_CLIENT_ID is set: ${{ secrets.YOUTUBE_CLIENT_ID != '' }}"
+          echo "YOUTUBE_CLIENT_SECRET is set: ${{ secrets.YOUTUBE_CLIENT_SECRET != '' }}"
+          echo "YOUTUBE_REFRESH_TOKEN is set: ${{ secrets.YOUTUBE_REFRESH_TOKEN != '' }}"
+          echo "YOUTUBE_CHANNEL_ID is set: ${{ secrets.YOUTUBE_CHANNEL_ID != '' }}"
 
       - name: Run the YouTube Shorts automation
         env:
