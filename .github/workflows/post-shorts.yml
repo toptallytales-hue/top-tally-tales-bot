@@ -1,26 +1,20 @@
 name: "TopTallyTales Short"
-
 on:
   workflow_dispatch:
-
 jobs:
   short:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-
       - name: Install FFmpeg
         run: sudo apt-get update && sudo apt-get install -y ffmpeg
-
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.10'
-
       - name: Install dependencies
         run: pip install edge-tts feedparser requests Pillow google-auth google-api-python-client
-
       - name: Build and upload the Short
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
