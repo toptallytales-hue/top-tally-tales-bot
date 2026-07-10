@@ -27,15 +27,14 @@ jobs:
           python-version: '3.10'
 
       - name: Install dependencies
-  run: |
-    pip install feedparser requests pillow gTTS google-api-python-client google-auth-oauthlib
-    sudo apt-get update
-    sudo apt-get install -y ffmpeg
+        run: |
+          pip install feedparser requests pillow gTTS google-api-python-client google-auth-oauthlib
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
 
       - name: Run the YouTube Shorts automation
         env:
           APPROVE: ${{ github.event.inputs.approve }}
-          # YouTube OAuth2 credentials (add these as secrets)
           YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
           YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
           YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
