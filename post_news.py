@@ -287,18 +287,34 @@ def pexels_clip(query, out_path):
 
 
 # ---------- Overlays (transparent text layers) ----------
+def _fit_font(draw, text, maxw, start, min_size=44):
+    """Largest font (from start size) that fits text on ONE line within maxw."""
+    size = start
+    while size > min_size:
+        f = _font(size)
+        if draw.textlength(text, font=f) <= maxw:
+            return f
+        size -= 4
+    return _font(min_size)
+
+
 def make_hook_overlay(topic, path):
     ov = _scrim()
     draw = ImageDraw.Draw(ov)
     _shadow_text(draw, (44, 70), BRAND, _font(42), WHITE)
-    kf, tf, sf = _font(56), _font(140), _font(52)
-    topic_lines = _wrap(draw, topic.upper(), tf, W - 120)
+    margin = 80
+    maxw = W - margin * 2
+    kf = _font(56)
+    # topic auto-fits width (single line), wrapping only if still too long at min size
+    tf = _fit_font(draw, topic.upper(), maxw, 140, min_size=60)
+    topic_lines = _wrap(draw, topic.upper(), tf, maxw)
+    sf = _fit_font(draw, f"{NUM_FACTS} FACTS THAT WILL SURPRISE YOU", maxw, 52, min_size=34)
     block = kf.size + 40 + (tf.size + 12) * len(topic_lines) + 40 + sf.size
     y = (H - block) // 2
     kw = draw.textlength("DID YOU KNOW?", font=kf)
     _shadow_text(draw, ((W - kw) / 2, y), "DID YOU KNOW?", kf, YELLOW)
     y += kf.size + 40
-    y = _center_shadow(draw, y, topic.upper(), tf, WHITE, W - 120)
+    y = _center_shadow(draw, y, topic.upper(), tf, WHITE, maxw)
     y += 26
     sub = f"{NUM_FACTS} FACTS THAT WILL SURPRISE YOU"
     sw = draw.textlength(sub, font=sf)
@@ -320,7 +336,7 @@ def make_fact_overlay(n, total, fact, path, accent):
     draw.text((cx - nw / 2, cy - nf.size / 2 - 8), ns, font=nf, fill=WHITE)
     ff = _font(82)
     y = cy + r + 80
-    for ln in _wrap(draw, fact, ff, W - 140):
+    for ln in _wrap(draw, fact, ff, W - 160):
         lw = draw.textlength(ln, font=ff)
         _shadow_text(draw, ((W - lw) / 2, y), ln, ff, WHITE)
         y += ff.size + 16
@@ -463,8 +479,15 @@ def main():
     os.makedirs(CLIP_DIR, exist_ok=True)
 
     posted, sha = load_posted()
+
+    def _topic_key(text):
+        return " ".join(re.findall(r"[a-z0-9]+", (text or "").lower())[:5])
+
+    posted_keys = {p for p in posted if " " in p or p.isalnum()}  # topic keys
     candidates = fetch_trending()
-    story = next((c for c in candidates if c["link"] and c["link"] not in posted), None)
+    story = next((c for c in candidates
+                  if c["link"] and c["link"] not in posted
+                  and _topic_key(c["title"]) not in posted_keys), None)
     if not story:
         print("✅ No new trending topic. Exiting.")
         return
@@ -508,6 +531,7 @@ def main():
 
     if ok and story.get("link"):
         posted.append(story["link"])
+        posted.append(_topic_key(story["title"]))   # also block this subject
         save_posted(posted, sha)
 
 
