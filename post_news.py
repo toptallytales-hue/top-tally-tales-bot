@@ -1,14 +1,15 @@
 """
-TopTallyTales — trending "Did you know?" facts Short.
+TopTallyTales — trending "Did you know?" facts Short WITH relevant stock footage.
 
-Picks the day's most prominent trending topic, GPT turns it into a punchy hook
-+ 4 surprising one-line facts, each on its own vibrant animated card, narrated
-in an energetic neural voice, perfectly synced, then uploaded to YouTube.
+Each card = your text laid over a darkened, relevant Pexels clip (a different
+clip per fact), with a colorful gradient fallback if no clip is found. Energetic
+neural voice, perfectly synced, uploaded to YouTube.
 
-Free stack: feedparser + GPT + edge-tts + Pillow + FFmpeg.
+Free stack: feedparser + GPT + Pexels (free API) + edge-tts + Pillow + FFmpeg.
 
-Env (secrets): OPENAI_API_KEY, YOUTUBE_CLIENT_ID, YOUTUBE_CLIENT_SECRET,
-YOUTUBE_REFRESH_TOKEN, and (optional) GH_TOKEN + GITHUB_REPOSITORY for no-repeats.
+Env (secrets): OPENAI_API_KEY, PEXELS_API_KEY,
+  YOUTUBE_CLIENT_ID, YOUTUBE_CLIENT_SECRET, YOUTUBE_REFRESH_TOKEN,
+  (optional) GH_TOKEN + GITHUB_REPOSITORY for no-repeats.
 """
 
 import os
@@ -23,10 +24,11 @@ from datetime import datetime
 import feedparser
 import requests
 import edge_tts
-from PIL import Image, ImageDraw, ImageFont, ImageFilter
+from PIL import Image, ImageDraw, ImageFont
 
 # === CONFIG ===
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
+PEXELS_API_KEY = os.environ.get("PEXELS_API_KEY")
 YOUTUBE_CLIENT_ID = os.environ.get("YOUTUBE_CLIENT_ID")
 YOUTUBE_CLIENT_SECRET = os.environ.get("YOUTUBE_CLIENT_SECRET")
 YOUTUBE_REFRESH_TOKEN = os.environ.get("YOUTUBE_REFRESH_TOKEN")
@@ -36,41 +38,40 @@ GH_REPO = os.environ.get("GITHUB_REPOSITORY")
 POSTED_FILE = "posted_shorts.json"
 
 BRAND = "TOP TALLY TALES"
-VOICE = "en-US-AriaNeural"      # lively US voice. Try en-US-GuyNeural / en-US-JennyNeural
-SPEAKING_RATE = "+12%"          # energetic
+VOICE = "en-US-AriaNeural"
+SPEAKING_RATE = "+12%"
 NUM_FACTS = 4
 
-# Trending sources (order = prominence; we take the top unposted topic)
 RSS_FEEDS = [
     "https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en",
-    "https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en&topic=e",  # entertainment
-    "https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en&topic=t",  # tech
-    "https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en&topic=s",  # sports
+    "https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en&topic=e",
+    "https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en&topic=t",
+    "https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en&topic=s",
 ]
 
 W, H = 1080, 1920
 FPS = 30
 GAP = 0.28
 TAIL = 0.6
-ZOOM_MAX = 1.06
 
 VOICE_OUT = "voice.mp3"
 VIDEO_OUT = "short.mp4"
 CARD_DIR = "cards"
+CLIP_DIR = "clips"
 
-WHITE = (255, 255, 255)
-# Vibrant gradient palette (top, bottom) — white text pops on all of them.
-PALETTE = [
-    ((104, 58, 183), (38, 16, 84)),     # purple
-    ((33, 118, 214), (12, 40, 96)),     # blue
-    ((0, 150, 136), (0, 55, 66)),       # teal
-    ((233, 106, 20), (96, 30, 8)),      # orange
-    ((214, 51, 132), (78, 12, 58)),     # magenta
-    ((46, 160, 90), (12, 58, 34)),      # green
+WHITE = (255, 255, 255, 255)
+YELLOW = (255, 235, 120, 255)
+PALETTE = [  # gradient fallback + number-badge accents
+    ((104, 58, 183), (38, 16, 84)),
+    ((33, 118, 214), (12, 40, 96)),
+    ((0, 150, 136), (0, 55, 66)),
+    ((233, 106, 20), (96, 30, 8)),
+    ((214, 51, 132), (78, 12, 58)),
+    ((46, 160, 90), (12, 58, 34)),
 ]
 
 
-# ---------- Fonts ----------
+# ---------- Fonts / text ----------
 def _font(size, bold=True):
     for p in ("oswald.ttf", "Oswald.ttf"):
         if os.path.exists(p):
@@ -85,6 +86,35 @@ def _font(size, bold=True):
         return ImageFont.load_default()
 
 
+def _shadow_text(draw, xy, text, font, fill):
+    x, y = xy
+    draw.text((x + 3, y + 3), text, font=font, fill=(0, 0, 0, 180))
+    draw.text((x, y), text, font=font, fill=fill)
+
+
+def _wrap(draw, text, font, maxw):
+    words, lines, cur = text.split(), [], ""
+    for w in words:
+        t = (cur + " " + w).strip()
+        if draw.textlength(t, font=font) <= maxw:
+            cur = t
+        else:
+            if cur:
+                lines.append(cur)
+            cur = w
+    if cur:
+        lines.append(cur)
+    return lines
+
+
+def _center_shadow(draw, y, text, font, fill, maxw):
+    for ln in _wrap(draw, text, font, maxw):
+        lw = draw.textlength(ln, font=font)
+        _shadow_text(draw, ((W - lw) / 2, y), ln, font, fill)
+        y += font.size + 14
+    return y
+
+
 def _clean_html(t):
     return " ".join(re.sub(r"<[^>]+>", "", t or "").split())
 
@@ -93,7 +123,31 @@ def _clean_title(t):
     return re.sub(r"\s+-\s+[^-]+$", "", t or "").strip()
 
 
-# ---------- Pick a trending topic ----------
+# ---------- Gradients / scrim ----------
+def _vgrad_rgb(top, bottom):
+    g = Image.new("RGB", (1, H))
+    for y in range(H):
+        f = y / (H - 1)
+        g.putpixel((0, y), tuple(int(top[i] + (bottom[i] - top[i]) * f) for i in range(3)))
+    return g.resize((W, H))
+
+
+def _vgrad_rgba(top, bottom):
+    g = Image.new("RGBA", (1, H))
+    for y in range(H):
+        f = y / (H - 1)
+        g.putpixel((0, y), tuple(int(top[i] + (bottom[i] - top[i]) * f) for i in range(4)))
+    return g.resize((W, H))
+
+
+def _scrim():
+    """Semi-dark overlay so white text stays readable over any footage."""
+    base = Image.new("RGBA", (W, H), (0, 0, 0, 105))
+    base = Image.alpha_composite(base, _vgrad_rgba((0, 0, 0, 40), (0, 0, 0, 170)))
+    return base
+
+
+# ---------- Trending ----------
 def fetch_trending():
     print("📡 Finding a trending topic...")
     entries = []
@@ -116,7 +170,7 @@ def fetch_trending():
     return out
 
 
-# ---------- Posted history ----------
+# ---------- History ----------
 def _gh_headers():
     return {"Authorization": f"token {GH_TOKEN}", "Accept": "application/vnd.github+json"}
 
@@ -151,171 +205,155 @@ def save_posted(links, sha):
         print(f"⚠️ history save failed: {e}")
 
 
-# ---------- GPT: topic -> hook + facts ----------
+# ---------- GPT: facts + visual search terms ----------
 def make_facts(story):
     print("🤖 Generating facts...")
-    fallback = {
-        "topic": story["title"][:40],
-        "hook": "Here are some things you probably didn't know.",
-        "facts": [story["title"]],
-        "title": story["title"][:80] + " #Shorts",
-    }
+    fb = {"topic": story["title"][:40], "topic_query": story["title"][:30],
+          "hook": "Here are some things you probably didn't know.",
+          "facts": [story["title"]], "queries": ["news"],
+          "title": story["title"][:80] + " #Shorts"}
     if not OPENAI_API_KEY:
-        return fallback
+        return fb
     try:
         r = requests.post(
             "https://api.openai.com/v1/chat/completions",
             headers={"Authorization": f"Bearer {OPENAI_API_KEY}", "Content-Type": "application/json"},
-            json={
-                "model": "gpt-4o-mini",
-                "messages": [
-                    {"role": "system", "content": (
-                        "You make viral 'Did you know?' fact Shorts for YouTube. Given a trending topic, "
-                        "identify the core subject and produce genuinely surprising, accurate, well-known facts "
-                        "about it (not made up). Retention is everything: instant hook, punchy delivery. "
-                        "Respond ONLY with valid JSON: "
-                        '{"topic": "...", "hook": "...", "facts": ["...", "..."], "title": "..."}. '
-                        "topic: 1-3 word on-screen subject in caps-friendly form. "
-                        "hook: one spoken scroll-stopping sentence (no 'welcome'/'hey guys'). "
-                        f"facts: EXACTLY {NUM_FACTS} items, each ONE short punchy factual sentence (max ~16 words), "
-                        "surprising and true. "
-                        "title: catchy YouTube Short title under 90 chars ending with #Shorts. "
-                        "No emojis, no hashtags inside hook/facts, no URLs."
-                    )},
-                    {"role": "user", "content": f"Trending topic: {story['title']}\nContext: {story['summary']}"},
-                ],
-            },
+            json={"model": "gpt-4o-mini", "messages": [
+                {"role": "system", "content": (
+                    "You make viral 'Did you know?' fact Shorts. Given a trending topic, identify the core "
+                    "subject and give surprising, accurate, well-known facts (not made up). "
+                    "Respond ONLY with valid JSON: "
+                    '{"topic":"...","topic_query":"...","hook":"...","facts":["..."],"queries":["..."],"title":"..."}. '
+                    "topic: 1-3 word on-screen subject. "
+                    "topic_query: 1-2 word CONCRETE filmable stock-video search term for the subject. "
+                    "hook: one spoken scroll-stopping sentence (no greetings). "
+                    f"facts: EXACTLY {NUM_FACTS} short punchy true sentences (max ~16 words each). "
+                    f'queries: EXACTLY {NUM_FACTS} items (parallel to facts); each a 1-2 word CONCRETE, filmable '
+                    "stock-video search term matching that fact's imagery (e.g. 'ocean', 'money', 'city night', "
+                    "'brain', 'space'). Avoid names/abstract words. "
+                    "title: catchy YouTube Short title under 90 chars ending with #Shorts. "
+                    "No emojis/hashtags in hook/facts, no URLs."
+                )},
+                {"role": "user", "content": f"Trending topic: {story['title']}\nContext: {story['summary']}"},
+            ]},
             timeout=45,
         )
         if r.status_code == 200:
             raw = r.json()["choices"][0]["message"]["content"].strip()
             raw = re.sub(r"^```(json)?|```$", "", raw, flags=re.MULTILINE).strip()
             d = json.loads(raw)
-            facts = [str(x).strip() for x in d.get("facts", []) if str(x).strip()]
+            facts = [str(x).strip() for x in d.get("facts", []) if str(x).strip()][:NUM_FACTS]
+            queries = [str(x).strip() for x in d.get("queries", [])][:NUM_FACTS]
             if d.get("topic") and d.get("hook") and len(facts) >= 3 and d.get("title"):
-                d["facts"] = facts[:NUM_FACTS]
+                while len(queries) < len(facts):
+                    queries.append(d.get("topic_query", "abstract"))
+                d["facts"], d["queries"] = facts, queries
                 print(f"✅ Facts ready on: {d['topic']}")
                 return d
-        print(f"⚠️ Facts JSON off; using fallback. ({r.status_code})")
+        print(f"⚠️ Facts JSON off ({r.status_code}); fallback.")
     except Exception as e:
-        print(f"⚠️ Facts generation failed ({e}); fallback.")
-    return fallback
+        print(f"⚠️ Facts failed ({e}); fallback.")
+    return fb
 
 
-# ---------- Cards ----------
-def _vertical_gradient(size, top, bottom):
-    w, h = size
-    g = Image.new("RGB", (1, h))
-    for y in range(h):
-        t = y / max(h - 1, 1)
-        g.putpixel((0, y), tuple(int(top[i] + (bottom[i] - top[i]) * t) for i in range(3)))
-    return g.resize((w, h))
+# ---------- Pexels footage ----------
+def pexels_clip(query, out_path):
+    if not PEXELS_API_KEY or not query:
+        return None
+    try:
+        r = requests.get("https://api.pexels.com/videos/search",
+                         headers={"Authorization": PEXELS_API_KEY},
+                         params={"query": query, "orientation": "portrait",
+                                 "per_page": 5, "size": "medium"}, timeout=25)
+        if r.status_code != 200:
+            print(f"   ⚠️ Pexels {query}: HTTP {r.status_code}")
+            return None
+        for v in r.json().get("videos", []):
+            files = [f for f in v.get("video_files", [])
+                     if f.get("file_type") == "video/mp4" and f.get("link")]
+            if not files:
+                continue
+            files.sort(key=lambda f: abs((f.get("height") or 0) - 1920))
+            link = files[0]["link"]
+            data = requests.get(link, timeout=90)
+            if data.status_code == 200 and data.content:
+                with open(out_path, "wb") as fh:
+                    fh.write(data.content)
+                print(f"   🎬 clip for '{query}'")
+                return out_path
+    except Exception as e:
+        print(f"   ⚠️ Pexels {query}: {e}")
+    return None
 
 
-def _wrap(draw, text, font, maxw):
-    words, lines, cur = text.split(), [], ""
-    for w in words:
-        t = (cur + " " + w).strip()
-        if draw.textlength(t, font=font) <= maxw:
-            cur = t
-        else:
-            if cur:
-                lines.append(cur)
-            cur = w
-    if cur:
-        lines.append(cur)
-    return lines
-
-
-def _center_text(draw, y, text, font, fill, maxw):
-    for ln in _wrap(draw, text, font, maxw):
-        lw = draw.textlength(ln, font=font)
-        draw.text(((W - lw) / 2, y), ln, font=font, fill=fill)
-        y += font.size + 14
-    return y
-
-
-def _brand(draw):
-    f = _font(38)
-    draw.text((44, H - 80), BRAND, font=f, fill=(255, 255, 255))
-
-
-def make_hook_card(topic, path, color):
-    card = _vertical_gradient((W, H), *color)
-    draw = ImageDraw.Draw(card)
-    draw.text((44, 70), BRAND, font=_font(42), fill=(255, 255, 255))
-    # centered stack
-    kf, tf, sf = _font(56), _font(150), _font(52)
+# ---------- Overlays (transparent text layers) ----------
+def make_hook_overlay(topic, path):
+    ov = _scrim()
+    draw = ImageDraw.Draw(ov)
+    _shadow_text(draw, (44, 70), BRAND, _font(42), WHITE)
+    kf, tf, sf = _font(56), _font(140), _font(52)
     topic_lines = _wrap(draw, topic.upper(), tf, W - 120)
-    block_h = kf.size + 40 + (tf.size + 10) * len(topic_lines) + 40 + sf.size
-    y = (H - block_h) // 2
+    block = kf.size + 40 + (tf.size + 12) * len(topic_lines) + 40 + sf.size
+    y = (H - block) // 2
     kw = draw.textlength("DID YOU KNOW?", font=kf)
-    draw.text(((W - kw) / 2, y), "DID YOU KNOW?", font=kf, fill=(255, 235, 120))
+    _shadow_text(draw, ((W - kw) / 2, y), "DID YOU KNOW?", kf, YELLOW)
     y += kf.size + 40
-    y = _center_text(draw, y, topic.upper(), tf, WHITE, W - 120)
+    y = _center_shadow(draw, y, topic.upper(), tf, WHITE, W - 120)
     y += 26
     sub = f"{NUM_FACTS} FACTS THAT WILL SURPRISE YOU"
     sw = draw.textlength(sub, font=sf)
-    draw.text(((W - sw) / 2, y), sub, font=sf, fill=(255, 255, 255))
-    card.save(path, "PNG")
+    _shadow_text(draw, ((W - sw) / 2, y), sub, sf, WHITE)
+    ov.save(path)
     return path
 
 
-def make_fact_card(n, total, fact, path, color):
-    card = _vertical_gradient((W, H), *color)
-    draw = ImageDraw.Draw(card)
-    draw.text((44, 70), BRAND, font=_font(42), fill=(255, 255, 255))
-
-    # Number badge (circle)
-    r = 90
-    cx, cy = W // 2, 430
-    draw.ellipse([cx - r, cy - r, cx + r, cy + r], fill=(255, 255, 255))
-    nf = _font(96)
+def make_fact_overlay(n, total, fact, path, accent):
+    ov = _scrim()
+    draw = ImageDraw.Draw(ov)
+    _shadow_text(draw, (44, 70), BRAND, _font(42), WHITE)
+    r = 92
+    cx, cy = W // 2, 470
+    draw.ellipse([cx - r, cy - r, cx + r, cy + r], fill=(accent[0], accent[1], accent[2], 255))
+    nf = _font(100)
     ns = str(n)
     nw = draw.textlength(ns, font=nf)
-    draw.text((cx - nw / 2, cy - nf.size / 2 - 6), ns, font=nf, fill=color[0])
-
-    # Fact text (centered, big)
-    ff = _font(80)
-    lines = _wrap(draw, fact, ff, W - 140)
-    total_h = (ff.size + 16) * len(lines)
-    y = cy + r + 90
-    for ln in lines:
+    draw.text((cx - nw / 2, cy - nf.size / 2 - 8), ns, font=nf, fill=WHITE)
+    ff = _font(82)
+    y = cy + r + 80
+    for ln in _wrap(draw, fact, ff, W - 140):
         lw = draw.textlength(ln, font=ff)
-        draw.text(((W - lw) / 2, y), ln, font=ff, fill=WHITE)
+        _shadow_text(draw, ((W - lw) / 2, y), ln, ff, WHITE)
         y += ff.size + 16
-
     # progress dots
-    dot = 18
-    gap = 34
-    total_w = total * dot + (total - 1) * gap
-    x = (W - total_w) // 2
+    dot, gp = 20, 34
+    tw = total * dot + (total - 1) * gp
+    x = (W - tw) // 2
     for i in range(total):
-        fill = (255, 235, 120) if i < n else (255, 255, 255, 120)
-        draw.ellipse([x, H - 150, x + dot, H - 150 + dot], fill=(255, 235, 120) if i < n else (255, 255, 255))
-        x += dot + gap
-    card.save(path, "PNG")
+        draw.ellipse([x, H - 150, x + dot, H - 150 + dot],
+                     fill=YELLOW if i < n else (255, 255, 255, 150))
+        x += dot + gp
+    ov.save(path)
     return path
 
 
-def make_outro_card(path, color):
-    card = _vertical_gradient((W, H), *color)
-    draw = ImageDraw.Draw(card)
-    draw.text((44, 70), BRAND, font=_font(42), fill=(255, 255, 255))
+def make_outro_overlay(path):
+    ov = _scrim()
+    draw = ImageDraw.Draw(ov)
+    _shadow_text(draw, (44, 70), BRAND, _font(42), WHITE)
     bf, sf = _font(120), _font(50)
     lines = _wrap(draw, "FOLLOW FOR MORE", bf, W - 120)
     block = (bf.size + 10) * len(lines) + 40 + sf.size
     y = (H - block) // 2
-    y = _center_text(draw, y, "FOLLOW FOR MORE", bf, WHITE, W - 120)
+    y = _center_shadow(draw, y, "FOLLOW FOR MORE", bf, WHITE, W - 120)
     y += 24
     sub = "MIND-BLOWING FACTS DAILY"
     sw = draw.textlength(sub, font=sf)
-    draw.text(((W - sw) / 2, y), sub, font=sf, fill=(255, 235, 120))
-    card.save(path, "PNG")
+    _shadow_text(draw, ((W - sw) / 2, y), sub, sf, YELLOW)
+    ov.save(path)
     return path
 
 
-# ---------- Voice (per segment, synced) ----------
+# ---------- Voice ----------
 async def _synth(text, path):
     await edge_tts.Communicate(text, VOICE, rate=SPEAKING_RATE).save(path)
 
@@ -331,7 +369,7 @@ def audio_duration(path):
 
 
 def build_narration(segment_texts):
-    print(f"🎙️ Synthesizing {len(segment_texts)} segments ({VOICE})...")
+    print(f"🎙️ Synthesizing {len(segment_texts)} segments...")
     seg_files, durs = [], []
     for i, t in enumerate(segment_texts):
         p = f"seg_{i}.mp3"
@@ -356,25 +394,25 @@ def build_narration(segment_texts):
     return VOICE_OUT, card_durations
 
 
-# ---------- Assemble (hard cuts, synced) ----------
-def _clip(card_path, duration, out_path, zoom_in=True):
-    frames = max(int(duration * FPS), 1)
-    z = f"min(zoom+0.0004,{ZOOM_MAX})" if zoom_in else f"if(eq(on,1),{ZOOM_MAX},max(zoom-0.0004,1.0))"
-    vf = (f"scale={int(W*1.08)}:{int(H*1.08)},"
-          f"zoompan=z='{z}':d={frames}:s={W}x{H}:fps={FPS}:"
-          f"x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)',format=yuv420p")
-    subprocess.run(["ffmpeg", "-y", "-loop", "1", "-i", card_path, "-vf", vf,
-                    "-frames:v", str(frames), "-r", str(FPS), "-preset", "veryfast",
-                    "-an", out_path], check=True, capture_output=True)
+# ---------- Build one clip: footage (or gradient) + text overlay ----------
+def build_clip(bg_video, gradient_png, overlay_png, duration, out_path):
+    if bg_video and os.path.exists(bg_video):
+        vf = ("[0:v]scale=1080:1920:force_original_aspect_ratio=increase,"
+              "crop=1080:1920,setsar=1,eq=brightness=-0.06[bg];"
+              "[bg][1:v]overlay=0:0,format=yuv420p[v]")
+        cmd = ["ffmpeg", "-y", "-stream_loop", "-1", "-i", bg_video, "-i", overlay_png,
+               "-filter_complex", vf, "-map", "[v]", "-an", "-r", str(FPS),
+               "-t", f"{duration:.3f}", "-preset", "veryfast", out_path]
+    else:
+        vf = "[0:v][1:v]overlay=0:0,format=yuv420p[v]"
+        cmd = ["ffmpeg", "-y", "-loop", "1", "-t", f"{duration:.3f}", "-i", gradient_png,
+               "-i", overlay_png, "-filter_complex", vf, "-map", "[v]", "-an",
+               "-r", str(FPS), "-preset", "veryfast", out_path]
+    subprocess.run(cmd, check=True, capture_output=True)
+    return out_path
 
 
-def assemble(cards, durations, audio, out):
-    print("🎞️ Rendering...")
-    clips = []
-    for i, (c, d) in enumerate(zip(cards, durations)):
-        clip = f"clip_{i}.mp4"
-        _clip(c, d, clip, zoom_in=(i % 2 == 0))
-        clips.append(clip)
+def assemble(clips, audio, out):
     with open("video_list.txt", "w") as f:
         for c in clips:
             f.write(f"file '{c}'\n")
@@ -419,9 +457,10 @@ def upload_to_youtube(video_path, title, description):
 
 # ---------- Main ----------
 def main():
-    print("🚀 TopTallyTales — Did You Know Shorts")
+    print("🚀 TopTallyTales — Did You Know Shorts (with footage)")
     print(f"⏰ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     os.makedirs(CARD_DIR, exist_ok=True)
+    os.makedirs(CLIP_DIR, exist_ok=True)
 
     posted, sha = load_posted()
     candidates = fetch_trending()
@@ -432,20 +471,36 @@ def main():
     print(f"📌 Topic source: {story['title']}")
 
     data = make_facts(story)
-    topic, hook, facts = data["topic"], data["hook"], data["facts"]
+    topic, hook, facts, queries = data["topic"], data["hook"], data["facts"], data["queries"]
 
     segments = [hook] + facts + ["Follow for more mind-blowing facts every day."]
     voice, durations = build_narration(segments)
 
-    # Cards: hook + fact cards + outro (same count/order as segments)
-    cards = [make_hook_card(topic, os.path.join(CARD_DIR, "hook.png"), PALETTE[0])]
+    # Segment plan: (overlay, gradient_color, search_query)
+    plan = [("hook", PALETTE[0], data.get("topic_query", topic))]
     for i, fact in enumerate(facts):
-        color = PALETTE[(i + 1) % len(PALETTE)]
-        cards.append(make_fact_card(i + 1, len(facts), fact,
-                                    os.path.join(CARD_DIR, f"fact_{i}.png"), color))
-    cards.append(make_outro_card(os.path.join(CARD_DIR, "outro.png"), PALETTE[(len(facts) + 1) % len(PALETTE)]))
+        plan.append((f"fact_{i}", PALETTE[(i + 1) % len(PALETTE)], queries[i] if i < len(queries) else topic))
+    plan.append(("outro", PALETTE[(len(facts) + 1) % len(PALETTE)], data.get("topic_query", topic)))
 
-    assemble(cards, durations, voice, VIDEO_OUT)
+    clips = []
+    for idx, (name, color, query) in enumerate(plan):
+        overlay = os.path.join(CARD_DIR, f"{name}.png")
+        if name == "hook":
+            make_hook_overlay(topic, overlay)
+        elif name == "outro":
+            make_outro_overlay(overlay)
+        else:
+            fnum = int(name.split("_")[1])
+            make_fact_overlay(fnum + 1, len(facts), facts[fnum], overlay, color[0])
+
+        gradient = os.path.join(CARD_DIR, f"{name}_grad.png")
+        _vgrad_rgb(color[0], color[1]).save(gradient)
+
+        bg = pexels_clip(query, os.path.join(CLIP_DIR, f"{name}.mp4"))
+        clip = build_clip(bg, gradient, overlay, durations[idx], f"clip_{idx}.mp4")
+        clips.append(clip)
+
+    assemble(clips, voice, VIDEO_OUT)
 
     description = (f"{topic} — did you know? {hook}\n\n"
                    "#Shorts #DidYouKnow #Facts #Trending #Viral #TopTallyTales")
