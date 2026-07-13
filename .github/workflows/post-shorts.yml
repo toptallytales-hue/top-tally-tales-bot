@@ -1,12 +1,15 @@
 name: "TopTallyTales Short"
-  permissions:
-    contents: write
+
+permissions:
+  contents: write
+
 on:
   workflow_dispatch:
+
 jobs:
   short:
     runs-on: ubuntu-latest
-    environment: top-tally-tales-bot        # 👈 REPLACE with the exact name from Settings → Environments
+    environment: top-tally-tales-bot
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
