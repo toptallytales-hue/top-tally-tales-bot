@@ -1,8 +1,8 @@
 name: "TopTallyTales Short"
-on:
-  workflow_dispatch:
   permissions:
     contents: write
+on:
+  workflow_dispatch:
 jobs:
   short:
     runs-on: ubuntu-latest
