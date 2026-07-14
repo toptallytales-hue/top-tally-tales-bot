@@ -1,11 +1,13 @@
 """
-TopTallyTales — trending "Did you know?" facts Short WITH relevant stock footage.
+TopTallyTales — evergreen "Did you know?" SPACE & SCIENCE fact Shorts.
 
-Each card = your text laid over a darkened, relevant Pexels clip (a different
-clip per fact), with a colorful gradient fallback if no clip is found. Energetic
-neural voice, perfectly synced, uploaded to YouTube.
+Rotates through a curated pool of real, stable subjects (planets, stars,
+phenomena, missions) — NO news, NO real people, NO fabrication risk. GPT writes
+only true, well-established facts + an honest curiosity title. Each fact plays
+over a relevant Pexels clip, with a colorful gradient fallback. Energetic neural
+voice, perfectly synced, uploaded to YouTube.
 
-Free stack: feedparser + GPT + Pexels (free API) + edge-tts + Pillow + FFmpeg.
+Free stack: GPT + Pexels (free API) + edge-tts + Pillow + FFmpeg.
 
 Env (secrets): OPENAI_API_KEY, PEXELS_API_KEY,
   YOUTUBE_CLIENT_ID, YOUTUBE_CLIENT_SECRET, YOUTUBE_REFRESH_TOKEN,
@@ -21,7 +23,6 @@ import asyncio
 import subprocess
 from datetime import datetime
 
-import feedparser
 import requests
 import edge_tts
 from PIL import Image, ImageDraw, ImageFont
@@ -42,11 +43,69 @@ VOICE = "en-US-AriaNeural"
 SPEAKING_RATE = "+12%"
 NUM_FACTS = 4
 
-RSS_FEEDS = [
-    "https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en",
-    "https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en&topic=e",
-    "https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en&topic=t",
-    "https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en&topic=s",
+# Curated, evergreen space & science subjects — no news, no real people, no
+# fabrication risk. The bot rotates through these and remembers what it posted.
+SUBJECTS = [
+    ("Black Holes", "black hole space"),
+    ("The Sun", "sun solar"),
+    ("Jupiter", "jupiter planet"),
+    ("Saturn's Rings", "saturn planet"),
+    ("Mars", "mars planet surface"),
+    ("The Moon", "moon surface"),
+    ("Neutron Stars", "star space"),
+    ("The Milky Way", "galaxy milky way"),
+    ("Supernovae", "supernova nebula"),
+    ("The International Space Station", "space station orbit"),
+    ("Venus", "venus planet"),
+    ("Mercury", "planet space"),
+    ("Neptune", "neptune planet"),
+    ("Uranus", "planet space"),
+    ("Pluto", "dwarf planet space"),
+    ("Comets", "comet space"),
+    ("Asteroids", "asteroid space"),
+    ("The James Webb Telescope", "telescope space stars"),
+    ("The Hubble Telescope", "telescope galaxy"),
+    ("Nebulae", "nebula space"),
+    ("Galaxies", "galaxy space"),
+    ("The Big Bang", "universe stars"),
+    ("Dark Matter", "universe galaxy"),
+    ("Solar Eclipses", "solar eclipse"),
+    ("The Northern Lights", "aurora northern lights"),
+    ("Meteor Showers", "meteor night sky"),
+    ("The Voyager Probes", "spacecraft space"),
+    ("Rockets", "rocket launch"),
+    ("Astronauts", "astronaut space"),
+    ("Zero Gravity", "astronaut floating space"),
+    ("The Speed of Light", "light space stars"),
+    ("Exoplanets", "planet space stars"),
+    ("The Kuiper Belt", "space stars"),
+    ("Solar Flares", "sun solar flare"),
+    ("Gravity", "space planet orbit"),
+    ("The Andromeda Galaxy", "galaxy space"),
+    ("Cosmic Radiation", "space stars universe"),
+    ("Star Formation", "nebula stars"),
+    ("Red Dwarfs", "star space"),
+    ("White Dwarfs", "star space"),
+    ("The Oort Cloud", "comet space"),
+    ("Space Junk", "satellite earth orbit"),
+    ("Satellites", "satellite orbit earth"),
+    ("The Aurora on Other Planets", "aurora planet"),
+    ("Titan (Saturn's Moon)", "moon space"),
+    ("Europa (Jupiter's Moon)", "moon ice space"),
+    ("The Sun's Corona", "sun corona"),
+    ("Wormholes", "space time universe"),
+    ("The Expanding Universe", "universe galaxy"),
+    ("Quasars", "galaxy space"),
+    ("Pulsars", "star space"),
+    ("Cosmic Dust", "nebula space"),
+    ("The Habitable Zone", "planet space"),
+    ("Space Suits", "astronaut spacesuit"),
+    ("Mars Rovers", "mars rover"),
+    ("The Kármán Line", "earth atmosphere space"),
+    ("Gas Giants", "jupiter planet"),
+    ("Ice Giants", "neptune planet"),
+    ("Solar Wind", "sun solar"),
+    ("The Life Cycle of Stars", "stars nebula"),
 ]
 
 W, H = 1080, 1920
@@ -147,27 +206,19 @@ def _scrim():
     return base
 
 
-# ---------- Trending ----------
-def fetch_trending():
-    print("📡 Finding a trending topic...")
-    entries = []
-    for url in RSS_FEEDS:
-        try:
-            entries.extend(feedparser.parse(url).entries[:15])
-        except Exception as e:
-            print(f"   ⚠️ {url}: {e}")
-    out, seen = [], set()
-    for e in entries:
-        title = _clean_title(e.get("title", ""))
-        key = " ".join(re.findall(r"[a-z0-9]+", title.lower())[:6])
-        if not title or key in seen:
-            continue
-        seen.add(key)
-        out.append({"title": title,
-                    "summary": _clean_html(e.get("summary", e.get("description", "")))[:400],
-                    "link": e.get("link", "")})
-    print(f"✅ {len(out)} trending candidates.")
-    return out
+# ---------- Pick next space subject (rotates, no repeats) ----------
+def pick_subject(posted_keys):
+    import random
+    remaining = [(name, q) for (name, q) in SUBJECTS
+                 if _subject_key(name) not in posted_keys]
+    pool = remaining if remaining else SUBJECTS  # if all used, start over
+    name, base_query = random.choice(pool)
+    print(f"🪐 Subject: {name}")
+    return {"topic": name, "topic_query": base_query, "key": _subject_key(name)}
+
+
+def _subject_key(name):
+    return " ".join(re.findall(r"[a-z0-9]+", name.lower())[:4])
 
 
 # ---------- History ----------
@@ -205,13 +256,16 @@ def save_posted(links, sha):
         print(f"⚠️ history save failed: {e}")
 
 
-# ---------- GPT: facts + visual search terms ----------
-def make_facts(story):
+# ---------- GPT: honest space facts + visual search terms ----------
+def make_facts(subject):
     print("🤖 Generating facts...")
-    fb = {"topic": story["title"][:40], "topic_query": story["title"][:30],
-          "hook": "Here are some things you probably didn't know.",
-          "facts": [story["title"]], "queries": ["news"],
-          "title": story["title"][:80] + " #Shorts"}
+    topic = subject["topic"]
+    base_q = subject["topic_query"]
+    fb = {"topic": topic, "topic_query": base_q,
+          "hook": f"Here's what makes {topic} incredible.",
+          "facts": [f"{topic} is one of the most fascinating things in the universe."],
+          "queries": [base_q],
+          "title": f"Mind-Blowing Facts About {topic} #Shorts"}
     if not OPENAI_API_KEY:
         return fb
     try:
@@ -220,21 +274,21 @@ def make_facts(story):
             headers={"Authorization": f"Bearer {OPENAI_API_KEY}", "Content-Type": "application/json"},
             json={"model": "gpt-4o-mini", "messages": [
                 {"role": "system", "content": (
-                    "You make viral 'Did you know?' fact Shorts. Given a trending topic, identify the core "
-                    "subject and give surprising, accurate, well-known facts (not made up). "
+                    "You make accurate, engaging 'Did you know?' space & science fact Shorts. "
+                    "CRITICAL: every fact must be TRUE and well-established science — never invent, exaggerate, "
+                    "or state anything uncertain as fact. If unsure, choose a safer, well-known fact. "
                     "Respond ONLY with valid JSON: "
-                    '{"topic":"...","topic_query":"...","hook":"...","facts":["..."],"queries":["..."],"title":"..."}. '
-                    "topic: 1-3 word on-screen subject. "
-                    "topic_query: 1-2 word CONCRETE filmable stock-video search term for the subject. "
-                    "hook: one spoken scroll-stopping sentence (no greetings). "
-                    f"facts: EXACTLY {NUM_FACTS} short punchy true sentences (max ~16 words each). "
-                    f'queries: EXACTLY {NUM_FACTS} items (parallel to facts); each a 1-2 word CONCRETE, filmable '
-                    "stock-video search term matching that fact's imagery (e.g. 'ocean', 'money', 'city night', "
-                    "'brain', 'space'). Avoid names/abstract words. "
-                    "title: catchy YouTube Short title under 90 chars ending with #Shorts. "
-                    "No emojis/hashtags in hook/facts, no URLs."
+                    '{"hook":"...","facts":["..."],"queries":["..."],"title":"..."}. '
+                    "hook: one spoken scroll-stopping sentence about the subject (no greetings). "
+                    f"facts: EXACTLY {NUM_FACTS} short, punchy, TRUE sentences (max ~16 words each), "
+                    "each a genuinely surprising well-established fact about the subject. "
+                    f'queries: EXACTLY {NUM_FACTS} items (parallel to facts); each a 1-2 word concrete space '
+                    "stock-video search term (e.g. 'galaxy', 'nebula', 'planet', 'rocket', 'stars'). "
+                    "title: honest, curiosity-driven YouTube Short title under 90 chars that matches the facts, "
+                    "ending with #Shorts. Do NOT sensationalise or mislead. "
+                    "No emojis/hashtags inside hook/facts, no URLs."
                 )},
-                {"role": "user", "content": f"Trending topic: {story['title']}\nContext: {story['summary']}"},
+                {"role": "user", "content": f"Subject: {topic}"},
             ]},
             timeout=45,
         )
@@ -244,12 +298,11 @@ def make_facts(story):
             d = json.loads(raw)
             facts = [str(x).strip() for x in d.get("facts", []) if str(x).strip()][:NUM_FACTS]
             queries = [str(x).strip() for x in d.get("queries", [])][:NUM_FACTS]
-            if d.get("topic") and d.get("hook") and len(facts) >= 3 and d.get("title"):
+            if d.get("hook") and len(facts) >= 3 and d.get("title"):
                 while len(queries) < len(facts):
-                    queries.append(d.get("topic_query", "abstract"))
-                d["facts"], d["queries"] = facts, queries
-                print(f"✅ Facts ready on: {d['topic']}")
-                return d
+                    queries.append(base_q)
+                return {"topic": topic, "topic_query": base_q, "hook": d["hook"],
+                        "facts": facts, "queries": queries, "title": d["title"]}
         print(f"⚠️ Facts JSON off ({r.status_code}); fallback.")
     except Exception as e:
         print(f"⚠️ Facts failed ({e}); fallback.")
@@ -442,7 +495,7 @@ def assemble(clips, audio, out):
 
 
 # ---------- YouTube ----------
-def upload_to_youtube(video_path, title, description):
+def upload_to_youtube(video_path, title, description, topic="Space"):
     print("📤 Uploading to YouTube...")
     if not YOUTUBE_REFRESH_TOKEN or not YOUTUBE_CLIENT_ID:
         print("❌ YouTube credentials not configured!")
@@ -456,11 +509,13 @@ def upload_to_youtube(video_path, title, description):
                             client_id=YOUTUBE_CLIENT_ID, client_secret=YOUTUBE_CLIENT_SECRET)
         yt = build("youtube", "v3", credentials=creds)
         media = MediaFileUpload(video_path, chunksize=-1, resumable=True)
+        tags = [topic, "space", "astronomy", "science", "space facts",
+                "universe", "did you know", "shorts"]
         req = yt.videos().insert(
             part="snippet,status",
             body={"snippet": {"title": title[:100], "description": description[:4900],
-                              "categoryId": "24",
-                              "tags": ["DidYouKnow", "Facts", "Trending", "Shorts", "TopTallyTales"]},
+                              "categoryId": "27",  # Education
+                              "tags": tags},
                   "status": {"privacyStatus": "public", "selfDeclaredMadeForKids": False}},
             media_body=media)
         resp = req.execute()
@@ -479,30 +534,19 @@ def main():
     os.makedirs(CLIP_DIR, exist_ok=True)
 
     posted, sha = load_posted()
+    posted_keys = set(posted)
 
-    def _topic_key(text):
-        return " ".join(re.findall(r"[a-z0-9]+", (text or "").lower())[:5])
-
-    posted_keys = {p for p in posted if " " in p or p.isalnum()}  # topic keys
-    candidates = fetch_trending()
-    story = next((c for c in candidates
-                  if c["link"] and c["link"] not in posted
-                  and _topic_key(c["title"]) not in posted_keys), None)
-    if not story:
-        print("✅ No new trending topic. Exiting.")
-        return
-    print(f"📌 Topic source: {story['title']}")
-
-    data = make_facts(story)
+    subject = pick_subject(posted_keys)
+    data = make_facts(subject)
     topic, hook, facts, queries = data["topic"], data["hook"], data["facts"], data["queries"]
 
-    segments = [hook] + facts + ["Follow for more mind-blowing facts every day."]
+    segments = [hook] + facts + ["Follow for more space facts every day."]
     voice, durations = build_narration(segments)
 
     # Segment plan: (overlay, gradient_color, search_query)
     plan = [("hook", PALETTE[0], data.get("topic_query", topic))]
     for i, fact in enumerate(facts):
-        plan.append((f"fact_{i}", PALETTE[(i + 1) % len(PALETTE)], queries[i] if i < len(queries) else topic))
+        plan.append((f"fact_{i}", PALETTE[(i + 1) % len(PALETTE)], queries[i] if i < len(queries) else data["topic_query"]))
     plan.append(("outro", PALETTE[(len(facts) + 1) % len(PALETTE)], data.get("topic_query", topic)))
 
     clips = []
@@ -519,19 +563,21 @@ def main():
         gradient = os.path.join(CARD_DIR, f"{name}_grad.png")
         _vgrad_rgb(color[0], color[1]).save(gradient)
 
-        bg = pexels_clip(query, os.path.join(CLIP_DIR, f"{name}.mp4"))
+        bg = (pexels_clip(query, os.path.join(CLIP_DIR, f"{name}.mp4"))
+              or pexels_clip("space", os.path.join(CLIP_DIR, f"{name}.mp4")))
         clip = build_clip(bg, gradient, overlay, durations[idx], f"clip_{idx}.mp4")
         clips.append(clip)
 
     assemble(clips, voice, VIDEO_OUT)
 
-    description = (f"{topic} — did you know? {hook}\n\n"
-                   "#Shorts #DidYouKnow #Facts #Trending #Viral #TopTallyTales")
-    ok = upload_to_youtube(VIDEO_OUT, data["title"], description)
+    # Niche-specific tags + honest description
+    topic_tag = "#" + re.sub(r"[^A-Za-z0-9]", "", topic)
+    description = (f"{hook}\n\n"
+                   f"{topic_tag} #space #astronomy #science #spacefacts #universe #Shorts")
+    ok = upload_to_youtube(VIDEO_OUT, data["title"], description, topic)
 
-    if ok and story.get("link"):
-        posted.append(story["link"])
-        posted.append(_topic_key(story["title"]))   # also block this subject
+    if ok:
+        posted.append(subject["key"])
         save_posted(posted, sha)
 
 
