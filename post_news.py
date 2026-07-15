@@ -256,37 +256,98 @@ def save_posted(links, sha):
         print(f"⚠️ history save failed: {e}")
 
 
-# ---------- GPT: honest space facts + visual search terms ----------
-def make_facts(subject):
-    print("🤖 Generating facts...")
+# ---------- Format registry (variety, same space niche) ----------
+# Each format: how many beats, the card style, the hook kicker/subtitle, and the
+# extra instruction that shapes the GPT script. Every format demands TRUE facts.
+FORMATS = {
+    "facts": {
+        "beats": 4, "style": "numbered", "kicker": "DID YOU KNOW?",
+        "sub": "4 FACTS THAT WILL SURPRISE YOU", "beat_label": "",
+        "instr": "Give EXACTLY 4 genuinely surprising, well-established facts about the subject, "
+                 "each one short punchy sentence.",
+        "outro_line": "Follow for more space facts every day.",
+    },
+    "story": {
+        "beats": 4, "style": "statement", "kicker": "THE STORY OF",
+        "sub": "A SHORT SPACE STORY", "beat_label": "",
+        "instr": "Tell the true story of the subject as 4 short chronological beats (setup, "
+                 "discovery/turning point, key moment, meaning today). Each beat one sentence.",
+        "outro_line": "Follow for more space stories.",
+    },
+    "single": {
+        "beats": 3, "style": "statement", "kicker": "DID YOU KNOW?",
+        "sub": "ONE MIND-BLOWING FACT", "beat_label": "",
+        "instr": "Pick ONE genuinely astonishing true fact about the subject, then explain it "
+                 "across 3 short escalating beats (the fact, why it's true, the wild implication).",
+        "outro_line": "Follow for more space facts.",
+    },
+    "versus": {
+        "beats": 4, "style": "statement", "kicker": "SPACE SHOWDOWN",
+        "sub": "WHO WINS?", "beat_label": "",
+        "instr": "Compare the subject with its most natural space counterpart. In 'topic' return "
+                 "the matchup as 'A vs B'. Give 4 short factual comparison beats (size, power, etc.).",
+        "outro_line": "Follow for more space showdowns.",
+    },
+    "whatif": {
+        "beats": 4, "style": "statement", "kicker": "WHAT IF?",
+        "sub": "A SPACE THOUGHT EXPERIMENT", "beat_label": "",
+        "instr": "Pose a 'what if' thought experiment about the subject, then answer it in 4 short "
+                 "beats grounded ENTIRELY in real, accepted physics. No fabrication.",
+        "outro_line": "Follow for more space what-ifs.",
+    },
+    "top5": {
+        "beats": 5, "style": "numbered", "kicker": "TOP 5",
+        "sub": "COUNTING DOWN", "beat_label": "",
+        "instr": "Give a TOP 5 true list related to the subject (e.g. facts, records, features). "
+                 "Each item one short punchy sentence, most impressive last.",
+        "outro_line": "Follow for more space countdowns.",
+    },
+    "howitworks": {
+        "beats": 4, "style": "statement", "kicker": "HOW IT WORKS",
+        "sub": "EXPLAINED SIMPLY", "beat_label": "",
+        "instr": "Explain how the subject works in 4 short, simple, accurate beats a beginner "
+                 "understands. Real science only.",
+        "outro_line": "Follow for more space explainers.",
+    },
+}
+
+
+def generate_content(subject, fmt_name):
+    """Generate hook + beats (say/show/query) + title for a given format. TRUE facts only."""
+    fmt = FORMATS[fmt_name]
     topic = subject["topic"]
     base_q = subject["topic_query"]
+    nb = fmt["beats"]
+    print(f"🤖 Generating '{fmt_name}' about {topic}...")
+
+    fb_beats = [{"say": f"{topic} is one of the most fascinating things in the universe.",
+                 "show": topic, "query": base_q}]
     fb = {"topic": topic, "topic_query": base_q,
           "hook": f"Here's what makes {topic} incredible.",
-          "facts": [f"{topic} is one of the most fascinating things in the universe."],
-          "queries": [base_q],
-          "title": f"Mind-Blowing Facts About {topic} #Shorts"}
+          "beats": fb_beats,
+          "title": f"Amazing Facts About {topic} #Shorts"}
     if not OPENAI_API_KEY:
-        return fb
+        return fb, fmt
     try:
         r = requests.post(
             "https://api.openai.com/v1/chat/completions",
             headers={"Authorization": f"Bearer {OPENAI_API_KEY}", "Content-Type": "application/json"},
             json={"model": "gpt-4o-mini", "messages": [
                 {"role": "system", "content": (
-                    "You make accurate, engaging 'Did you know?' space & science fact Shorts. "
-                    "CRITICAL: every fact must be TRUE and well-established science — never invent, exaggerate, "
-                    "or state anything uncertain as fact. If unsure, choose a safer, well-known fact. "
+                    "You script accurate, engaging space & science Shorts. "
+                    "CRITICAL: everything must be TRUE, well-established science — never invent, exaggerate, "
+                    "or state anything uncertain as fact. If unsure, pick a safer well-known point. "
+                    "Retention matters: the hook must stop the scroll instantly (no greetings). "
+                    f"FORMAT INSTRUCTION: {fmt['instr']} "
                     "Respond ONLY with valid JSON: "
-                    '{"hook":"...","facts":["..."],"queries":["..."],"title":"..."}. '
-                    "hook: one spoken scroll-stopping sentence about the subject (no greetings). "
-                    f"facts: EXACTLY {NUM_FACTS} short, punchy, TRUE sentences (max ~16 words each), "
-                    "each a genuinely surprising well-established fact about the subject. "
-                    f'queries: EXACTLY {NUM_FACTS} items (parallel to facts); each a 1-2 word concrete space '
-                    "stock-video search term (e.g. 'galaxy', 'nebula', 'planet', 'rocket', 'stars'). "
-                    "title: honest, curiosity-driven YouTube Short title under 90 chars that matches the facts, "
-                    "ending with #Shorts. Do NOT sensationalise or mislead. "
-                    "No emojis/hashtags inside hook/facts, no URLs."
+                    '{"topic":"...","hook":"...","title":"...","beats":[{"say":"...","show":"...","query":"..."}]}. '
+                    "topic: the on-screen subject (keep the given subject unless the format needs a matchup). "
+                    f"beats: EXACTLY {nb} items. "
+                    "say = the spoken sentence (max ~18 words). "
+                    "show = a SHORT on-screen version (max ~10 words). "
+                    "query = 1-2 word concrete space stock-video term (e.g. 'galaxy','nebula','rocket'). "
+                    "title: honest, curiosity-driven, under 90 chars, ending with #Shorts. No misleading claims. "
+                    "No emojis/hashtags inside say/show/hook, no URLs."
                 )},
                 {"role": "user", "content": f"Subject: {topic}"},
             ]},
@@ -296,17 +357,23 @@ def make_facts(subject):
             raw = r.json()["choices"][0]["message"]["content"].strip()
             raw = re.sub(r"^```(json)?|```$", "", raw, flags=re.MULTILINE).strip()
             d = json.loads(raw)
-            facts = [str(x).strip() for x in d.get("facts", []) if str(x).strip()][:NUM_FACTS]
-            queries = [str(x).strip() for x in d.get("queries", [])][:NUM_FACTS]
-            if d.get("hook") and len(facts) >= 3 and d.get("title"):
-                while len(queries) < len(facts):
-                    queries.append(base_q)
-                return {"topic": topic, "topic_query": base_q, "hook": d["hook"],
-                        "facts": facts, "queries": queries, "title": d["title"]}
-        print(f"⚠️ Facts JSON off ({r.status_code}); fallback.")
+            beats = []
+            for b in d.get("beats", []):
+                say = str(b.get("say", "")).strip()
+                if not say:
+                    continue
+                beats.append({"say": say,
+                              "show": str(b.get("show", say)).strip() or say,
+                              "query": str(b.get("query", base_q)).strip() or base_q})
+            beats = beats[:nb]
+            if d.get("hook") and len(beats) >= max(3, nb - 1) and d.get("title"):
+                return {"topic": str(d.get("topic", topic)).strip() or topic,
+                        "topic_query": base_q, "hook": d["hook"].strip(),
+                        "beats": beats, "title": d["title"].strip()}, fmt
+        print(f"⚠️ Script JSON off ({r.status_code}); fallback.")
     except Exception as e:
-        print(f"⚠️ Facts failed ({e}); fallback.")
-    return fb
+        print(f"⚠️ Script failed ({e}); fallback.")
+    return fb, fmt
 
 
 # ---------- Pexels footage ----------
@@ -351,25 +418,24 @@ def _fit_font(draw, text, maxw, start, min_size=44):
     return _font(min_size)
 
 
-def make_hook_overlay(topic, path):
+def make_hook_overlay(topic, path, kicker="DID YOU KNOW?", subtitle=None):
     ov = _scrim()
     draw = ImageDraw.Draw(ov)
     _shadow_text(draw, (44, 70), BRAND, _font(42), WHITE)
     margin = 80
     maxw = W - margin * 2
     kf = _font(56)
-    # topic auto-fits width (single line), wrapping only if still too long at min size
-    tf = _fit_font(draw, topic.upper(), maxw, 140, min_size=60)
+    tf = _fit_font(draw, topic.upper(), maxw, 140, min_size=54)
     topic_lines = _wrap(draw, topic.upper(), tf, maxw)
-    sf = _fit_font(draw, f"{NUM_FACTS} FACTS THAT WILL SURPRISE YOU", maxw, 52, min_size=34)
+    sub = subtitle if subtitle is not None else f"{NUM_FACTS} FACTS THAT WILL SURPRISE YOU"
+    sf = _fit_font(draw, sub, maxw, 52, min_size=32)
     block = kf.size + 40 + (tf.size + 12) * len(topic_lines) + 40 + sf.size
     y = (H - block) // 2
-    kw = draw.textlength("DID YOU KNOW?", font=kf)
-    _shadow_text(draw, ((W - kw) / 2, y), "DID YOU KNOW?", kf, YELLOW)
+    kw = draw.textlength(kicker, font=kf)
+    _shadow_text(draw, ((W - kw) / 2, y), kicker, kf, YELLOW)
     y += kf.size + 40
     y = _center_shadow(draw, y, topic.upper(), tf, WHITE, maxw)
     y += 26
-    sub = f"{NUM_FACTS} FACTS THAT WILL SURPRISE YOU"
     sw = draw.textlength(sub, font=sf)
     _shadow_text(draw, ((W - sw) / 2, y), sub, sf, WHITE)
     ov.save(path)
@@ -401,6 +467,39 @@ def make_fact_overlay(n, total, fact, path, accent):
         draw.ellipse([x, H - 150, x + dot, H - 150 + dot],
                      fill=YELLOW if i < n else (255, 255, 255, 150))
         x += dot + gp
+    ov.save(path)
+    return path
+
+
+def make_statement_overlay(label, text, path, n=None, total=None):
+    """A non-numbered beat card for stories, explainers, comparisons, etc."""
+    ov = _scrim()
+    draw = ImageDraw.Draw(ov)
+    _shadow_text(draw, (44, 70), BRAND, _font(42), WHITE)
+    maxw = W - 160
+    lf = _font(48)
+    if label:
+        lw = draw.textlength(label, font=lf)
+        _shadow_text(draw, ((W - lw) / 2, 360), label, lf, YELLOW)
+    tf = _font(80)
+    lines = _wrap(draw, text, tf, maxw)
+    if len(lines) > 6:
+        tf = _font(64)
+        lines = _wrap(draw, text, tf, maxw)
+    total_h = (tf.size + 16) * len(lines)
+    y = (H - total_h) // 2 + 30
+    for ln in lines:
+        tw = draw.textlength(ln, font=tf)
+        _shadow_text(draw, ((W - tw) / 2, y), ln, tf, WHITE)
+        y += tf.size + 16
+    if n and total:
+        dot, gp = 20, 34
+        wtot = total * dot + (total - 1) * gp
+        x = (W - wtot) // 2
+        for i in range(total):
+            draw.ellipse([x, H - 150, x + dot, H - 150 + dot],
+                         fill=YELLOW if i < n else (255, 255, 255, 150))
+            x += dot + gp
     ov.save(path)
     return path
 
@@ -528,7 +627,8 @@ def upload_to_youtube(video_path, title, description, topic="Space"):
 
 # ---------- Main ----------
 def main():
-    print("🚀 TopTallyTales — Did You Know Shorts (with footage)")
+    import random
+    print("🚀 TopTallyTales — Space & Science Shorts")
     print(f"⏰ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     os.makedirs(CARD_DIR, exist_ok=True)
     os.makedirs(CLIP_DIR, exist_ok=True)
@@ -537,40 +637,55 @@ def main():
     posted_keys = set(posted)
 
     subject = pick_subject(posted_keys)
-    data = make_facts(subject)
-    topic, hook, facts, queries = data["topic"], data["hook"], data["facts"], data["queries"]
+    fmt_name = random.choice(list(FORMATS.keys()))
+    print(f"🎞️ Format: {fmt_name}")
 
-    segments = [hook] + facts + ["Follow for more space facts every day."]
+    data, fmt = generate_content(subject, fmt_name)
+    topic = data["topic"]
+    hook = data["hook"]
+    beats = data["beats"]
+
+    segments = [hook] + [b["say"] for b in beats] + [fmt["outro_line"]]
     voice, durations = build_narration(segments)
 
-    # Segment plan: (overlay, gradient_color, search_query)
-    plan = [("hook", PALETTE[0], data.get("topic_query", topic))]
-    for i, fact in enumerate(facts):
-        plan.append((f"fact_{i}", PALETTE[(i + 1) % len(PALETTE)], queries[i] if i < len(queries) else data["topic_query"]))
-    plan.append(("outro", PALETTE[(len(facts) + 1) % len(PALETTE)], data.get("topic_query", topic)))
-
+    # Build clips: hook + beat cards (numbered or statement) + outro
     clips = []
-    for idx, (name, color, query) in enumerate(plan):
-        overlay = os.path.join(CARD_DIR, f"{name}.png")
-        if name == "hook":
-            make_hook_overlay(topic, overlay)
-        elif name == "outro":
-            make_outro_overlay(overlay)
+    total = len(beats)
+
+    # hook
+    hook_ov = os.path.join(CARD_DIR, "hook.png")
+    make_hook_overlay(topic, hook_ov, kicker=fmt["kicker"], subtitle=fmt["sub"])
+    hook_grad = os.path.join(CARD_DIR, "hook_grad.png")
+    _vgrad_rgb(*PALETTE[0]).save(hook_grad)
+    hook_bg = pexels_clip(data.get("topic_query", "space"), os.path.join(CLIP_DIR, "hook.mp4")) \
+        or pexels_clip("space", os.path.join(CLIP_DIR, "hook.mp4"))
+    clips.append(build_clip(hook_bg, hook_grad, hook_ov, durations[0], "clip_0.mp4"))
+
+    # beats
+    for i, b in enumerate(beats):
+        color = PALETTE[(i + 1) % len(PALETTE)]
+        ov = os.path.join(CARD_DIR, f"beat_{i}.png")
+        if fmt["style"] == "numbered":
+            make_fact_overlay(i + 1, total, b["show"], ov, color[0])
         else:
-            fnum = int(name.split("_")[1])
-            make_fact_overlay(fnum + 1, len(facts), facts[fnum], overlay, color[0])
+            make_statement_overlay(fmt["beat_label"], b["show"], ov, n=i + 1, total=total)
+        grad = os.path.join(CARD_DIR, f"beat_{i}_grad.png")
+        _vgrad_rgb(color[0], color[1]).save(grad)
+        bg = pexels_clip(b["query"], os.path.join(CLIP_DIR, f"beat_{i}.mp4")) \
+            or pexels_clip("space", os.path.join(CLIP_DIR, f"beat_{i}.mp4"))
+        clips.append(build_clip(bg, grad, ov, durations[1 + i], f"clip_{1 + i}.mp4"))
 
-        gradient = os.path.join(CARD_DIR, f"{name}_grad.png")
-        _vgrad_rgb(color[0], color[1]).save(gradient)
-
-        bg = (pexels_clip(query, os.path.join(CLIP_DIR, f"{name}.mp4"))
-              or pexels_clip("space", os.path.join(CLIP_DIR, f"{name}.mp4")))
-        clip = build_clip(bg, gradient, overlay, durations[idx], f"clip_{idx}.mp4")
-        clips.append(clip)
+    # outro
+    outro_ov = os.path.join(CARD_DIR, "outro.png")
+    make_outro_overlay(outro_ov)
+    outro_grad = os.path.join(CARD_DIR, "outro_grad.png")
+    _vgrad_rgb(*PALETTE[(total + 1) % len(PALETTE)]).save(outro_grad)
+    outro_bg = pexels_clip("galaxy stars", os.path.join(CLIP_DIR, "outro.mp4")) \
+        or pexels_clip("space", os.path.join(CLIP_DIR, "outro.mp4"))
+    clips.append(build_clip(outro_bg, outro_grad, outro_ov, durations[-1], f"clip_{len(clips)}.mp4"))
 
     assemble(clips, voice, VIDEO_OUT)
 
-    # Niche-specific tags + honest description
     topic_tag = "#" + re.sub(r"[^A-Za-z0-9]", "", topic)
     description = (f"{hook}\n\n"
                    f"{topic_tag} #space #astronomy #science #spacefacts #universe #Shorts")
