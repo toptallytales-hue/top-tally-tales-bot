@@ -44,6 +44,10 @@ LOGO_FILE = "logo.png"   # optional: commit your logo to the repo root
 ELEVENLABS_API_KEY = os.environ.get("ELEVENLABS_API_KEY")
 ELEVENLABS_VOICE_ID = os.environ.get("ELEVENLABS_VOICE_ID", "pNInz6obpgDQGcFmaJgB")  # 'Adam' (deep)
 ELEVENLABS_MODEL = "eleven_turbo_v2"
+USAGE_FILE = "el_usage.json"    # shared with the Shorts builder (same repo)
+IS_LONGFORM = True
+_el_run_enabled = True          # long videos always use ElevenLabs when a key is set
+_el_chars = 0
 VOICE = "en-GB-RyanNeural"   # free fallback: British documentary storyteller
 SPEAKING_RATE = "+4%"        # calmer for long-form
 
@@ -144,9 +148,10 @@ def _brandmark(ov):
 
 def synth_segment(text, path):
     """ElevenLabs (dramatic) if available, else free edge-tts; normalized for concat."""
+    global _el_chars
     raw = path + ".raw.mp3"
     made = False
-    if ELEVENLABS_API_KEY:
+    if _el_run_enabled and ELEVENLABS_API_KEY:
         try:
             r = requests.post(
                 f"https://api.elevenlabs.io/v1/text-to-speech/{ELEVENLABS_VOICE_ID}",
@@ -158,6 +163,7 @@ def synth_segment(text, path):
             if r.status_code == 200 and r.content:
                 with open(raw, "wb") as f:
                     f.write(r.content)
+                _el_chars += len(text)
                 made = True
             else:
                 print(f"   ⚠️ ElevenLabs {r.status_code}: {r.text[:100]} — using free voice")
@@ -277,6 +283,46 @@ def save_posted(links, sha):
         requests.put(url, headers=_gh_headers(), json=payload)
     except Exception as e:
         print(f"⚠️ history save failed: {e}")
+
+
+def load_usage():
+    month = datetime.utcnow().strftime("%Y-%m")
+    default = {"month": month, "long": 0, "short": 0, "_sha": None}
+    if not GH_TOKEN or not GH_REPO:
+        return default
+    try:
+        owner, repo = GH_REPO.split("/")
+        url = f"https://api.github.com/repos/{owner}/{repo}/contents/{USAGE_FILE}"
+        r = requests.get(url, headers=_gh_headers())
+        if r.status_code == 200:
+            d = r.json()
+            data = json.loads(base64.b64decode(d["content"]).decode())
+            data["_sha"] = d["sha"]
+            if data.get("month") != month:
+                data = {"month": month, "long": 0, "short": 0, "_sha": d["sha"]}
+            data.setdefault("long", 0)
+            data.setdefault("short", 0)
+            return data
+    except Exception as e:
+        print(f"⚠️ usage load failed: {e}")
+    return default
+
+
+def save_usage(u):
+    if not GH_TOKEN or not GH_REPO:
+        return
+    try:
+        owner, repo = GH_REPO.split("/")
+        url = f"https://api.github.com/repos/{owner}/{repo}/contents/{USAGE_FILE}"
+        sha = u.get("_sha")
+        body = {"month": u["month"], "long": u.get("long", 0), "short": u.get("short", 0)}
+        content = base64.b64encode(json.dumps(body, indent=2).encode()).decode()
+        payload = {"message": "Update ElevenLabs usage", "content": content}
+        if sha:
+            payload["sha"] = sha
+        requests.put(url, headers=_gh_headers(), json=payload)
+    except Exception as e:
+        print(f"⚠️ usage save failed: {e}")
 
 
 def pick_subject(posted_keys):
@@ -594,6 +640,9 @@ def main():
     os.makedirs(CLIP_DIR, exist_ok=True)
 
     posted, sha = load_posted()
+    usage = load_usage()
+    if ELEVENLABS_API_KEY:
+        print(f"🎙️ ElevenLabs ON for this deep-dive (month long total {usage.get('long', 0)} chars)")
     subject = pick_topic(set(posted))
     script = generate_script(subject)
     topic = subject["topic"]
@@ -639,6 +688,11 @@ def main():
     if ok:
         posted.append(subject["key"])
         save_posted(posted, sha)
+
+    if _el_chars > 0:
+        usage["long"] = usage.get("long", 0) + _el_chars
+        save_usage(usage)
+        print(f"🧾 ElevenLabs: +{_el_chars} chars (long total {usage['long']} this month)")
 
 
 if __name__ == "__main__":
