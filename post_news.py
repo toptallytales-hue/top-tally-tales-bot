@@ -25,6 +25,7 @@ from datetime import datetime
 
 import requests
 import edge_tts
+import feedparser
 from PIL import Image, ImageDraw, ImageFont
 
 # === CONFIG ===
@@ -38,9 +39,21 @@ GH_TOKEN = os.environ.get("GH_TOKEN") or os.environ.get("APPROVAL_TOKEN")
 GH_REPO = os.environ.get("GITHUB_REPOSITORY")
 POSTED_FILE = "posted_shorts.json"
 
-BRAND = "TOP TALLY TALES"
-VOICE = "en-US-AriaNeural"
-SPEAKING_RATE = "+12%"
+BRAND = "TOP SPACE TALES"
+LOGO_FILE = "logo.png"   # optional: commit your logo to the repo root to use it as the watermark
+
+# Voice: ElevenLabs (dramatic) when a key is set, else a better free edge-tts voice.
+ELEVENLABS_API_KEY = os.environ.get("ELEVENLABS_API_KEY")
+ELEVENLABS_VOICE_ID = os.environ.get("ELEVENLABS_VOICE_ID", "pNInz6obpgDQGcFmaJgB")  # 'Adam' (deep)
+ELEVENLABS_MODEL = "eleven_turbo_v2"   # cheaper on the free tier
+VOICE = "en-US-GuyNeural"   # free fallback: deeper, storyteller-ish
+SPEAKING_RATE = "+8%"
+
+# Space/science trending sources (subject picking) — safe, on-niche only.
+SPACE_FEEDS = [
+    "https://www.sciencedaily.com/rss/space_time.xml",
+    "https://phys.org/rss-feed/space-news/",
+]
 NUM_FACTS = 4
 
 # Curated, evergreen space & science subjects — no news, no real people, no
@@ -143,6 +156,126 @@ def _font(size, bold=True):
         return ImageFont.truetype(base + ("DejaVuSans-Bold.ttf" if bold else "DejaVuSans.ttf"), size)
     except Exception:
         return ImageFont.load_default()
+
+
+_LOGO_CACHE = {}
+
+
+def _load_logo():
+    if "img" in _LOGO_CACHE:
+        return _LOGO_CACHE["img"]
+    img = None
+    for p in (LOGO_FILE, "logo.png", "Logo.png"):
+        if os.path.exists(p):
+            try:
+                img = Image.open(p).convert("RGBA")
+                break
+            except Exception:
+                pass
+    _LOGO_CACHE["img"] = img
+    return img
+
+
+def _brandmark(ov):
+    """Watermark = logo image (if committed) + brand text, top-left."""
+    logo = _load_logo()
+    draw = ImageDraw.Draw(ov)
+    if logo is not None:
+        h = 76
+        w = max(int(logo.width * h / logo.height), 1)
+        lr = logo.resize((w, h), Image.LANCZOS)
+        ov.paste(lr, (40, 44), lr)
+        _shadow_text(draw, (40 + w + 18, 62), BRAND, _font(40), WHITE)
+    else:
+        _shadow_text(draw, (44, 70), BRAND, _font(42), WHITE)
+
+
+def synth_segment(text, path):
+    """Synthesize one segment: ElevenLabs if available, else free edge-tts.
+    Normalizes to 24kHz mono mp3 so all segments concat cleanly."""
+    raw = path + ".raw.mp3"
+    made = False
+    if ELEVENLABS_API_KEY:
+        try:
+            r = requests.post(
+                f"https://api.elevenlabs.io/v1/text-to-speech/{ELEVENLABS_VOICE_ID}",
+                headers={"xi-api-key": ELEVENLABS_API_KEY, "Content-Type": "application/json"},
+                json={"text": text, "model_id": ELEVENLABS_MODEL,
+                      "voice_settings": {"stability": 0.4, "similarity_boost": 0.75, "style": 0.3}},
+                timeout=60,
+            )
+            if r.status_code == 200 and r.content:
+                with open(raw, "wb") as f:
+                    f.write(r.content)
+                made = True
+            else:
+                print(f"   ⚠️ ElevenLabs {r.status_code}: {r.text[:100]} — using free voice")
+        except Exception as e:
+            print(f"   ⚠️ ElevenLabs failed ({e}) — using free voice")
+    if not made:
+        asyncio.run(edge_tts.Communicate(text, VOICE, rate=SPEAKING_RATE).save(raw))
+    # Normalize format for clean concat
+    subprocess.run(["ffmpeg", "-y", "-i", raw, "-ar", "24000", "-ac", "1", "-b:a", "48k", path],
+                   check=True, capture_output=True)
+    try:
+        os.remove(raw)
+    except Exception:
+        pass
+    return path
+
+
+# ---------- Trending space subject (safe: space/science only) ----------
+def _subject_from_headline(headline):
+    if OPENAI_API_KEY:
+        try:
+            r = requests.post(
+                "https://api.openai.com/v1/chat/completions",
+                headers={"Authorization": f"Bearer {OPENAI_API_KEY}", "Content-Type": "application/json"},
+                json={"model": "gpt-4o-mini", "messages": [
+                    {"role": "system", "content": (
+                        "From this space/science news headline, extract the core subject. "
+                        'Respond ONLY as JSON: {"topic":"2-3 word subject","query":"1-2 word stock-video term"}. '
+                        "Must be a real space/science subject; if the headline is not about space/science, "
+                        'return {"topic":"","query":""}.')},
+                    {"role": "user", "content": headline},
+                ]},
+                timeout=30,
+            )
+            if r.status_code == 200:
+                raw = r.json()["choices"][0]["message"]["content"].strip()
+                raw = re.sub(r"^```(json)?|```$", "", raw, flags=re.MULTILINE).strip()
+                d = json.loads(raw)
+                if d.get("topic"):
+                    return d["topic"].strip(), (d.get("query") or "space").strip()
+        except Exception:
+            pass
+    words = [w for w in re.findall(r"[A-Za-z]+", headline) if len(w) > 3][:3]
+    return (" ".join(words).title() if words else ""), "space"
+
+
+def trending_subject(posted_keys):
+    for url in SPACE_FEEDS:
+        try:
+            entries = feedparser.parse(url).entries[:12]
+        except Exception:
+            continue
+        for e in entries:
+            title = re.sub(r"\s+", " ", e.get("title", "")).strip()
+            if not title:
+                continue
+            key = _subject_key(title)
+            if key in posted_keys:
+                continue
+            topic, query = _subject_from_headline(title)
+            if topic:
+                print(f"📈 Trending topic: {topic}  (from: {title[:60]})")
+                return {"topic": topic, "topic_query": query, "key": key}
+    return None
+
+
+def pick_topic(posted_keys):
+    """Prefer a timely space/science trending subject; fall back to the curated pool."""
+    return trending_subject(posted_keys) or pick_subject(posted_keys)
 
 
 def _shadow_text(draw, xy, text, font, fill):
@@ -421,7 +554,7 @@ def _fit_font(draw, text, maxw, start, min_size=44):
 def make_hook_overlay(topic, path, kicker="DID YOU KNOW?", subtitle=None):
     ov = _scrim()
     draw = ImageDraw.Draw(ov)
-    _shadow_text(draw, (44, 70), BRAND, _font(42), WHITE)
+    _brandmark(ov)
     margin = 80
     maxw = W - margin * 2
     kf = _font(56)
@@ -445,7 +578,7 @@ def make_hook_overlay(topic, path, kicker="DID YOU KNOW?", subtitle=None):
 def make_fact_overlay(n, total, fact, path, accent):
     ov = _scrim()
     draw = ImageDraw.Draw(ov)
-    _shadow_text(draw, (44, 70), BRAND, _font(42), WHITE)
+    _brandmark(ov)
     r = 92
     cx, cy = W // 2, 470
     draw.ellipse([cx - r, cy - r, cx + r, cy + r], fill=(accent[0], accent[1], accent[2], 255))
@@ -475,7 +608,7 @@ def make_statement_overlay(label, text, path, n=None, total=None):
     """A non-numbered beat card for stories, explainers, comparisons, etc."""
     ov = _scrim()
     draw = ImageDraw.Draw(ov)
-    _shadow_text(draw, (44, 70), BRAND, _font(42), WHITE)
+    _brandmark(ov)
     maxw = W - 160
     lf = _font(48)
     if label:
@@ -507,7 +640,7 @@ def make_statement_overlay(label, text, path, n=None, total=None):
 def make_outro_overlay(path):
     ov = _scrim()
     draw = ImageDraw.Draw(ov)
-    _shadow_text(draw, (44, 70), BRAND, _font(42), WHITE)
+    _brandmark(ov)
     bf, sf = _font(120), _font(50)
     lines = _wrap(draw, "FOLLOW FOR MORE", bf, W - 120)
     block = (bf.size + 10) * len(lines) + 40 + sf.size
@@ -541,7 +674,7 @@ def build_narration(segment_texts):
     seg_files, durs = [], []
     for i, t in enumerate(segment_texts):
         p = f"seg_{i}.mp3"
-        asyncio.run(_synth(t, p))
+        synth_segment(t, p)
         seg_files.append(p)
         durs.append(audio_duration(p))
     for name, dur in (("sil.mp3", GAP), ("tail.mp3", TAIL)):
@@ -636,7 +769,7 @@ def main():
     posted, sha = load_posted()
     posted_keys = set(posted)
 
-    subject = pick_subject(posted_keys)
+    subject = pick_topic(posted_keys)
     fmt_name = random.choice(list(FORMATS.keys()))
     print(f"🎞️ Format: {fmt_name}")
 
