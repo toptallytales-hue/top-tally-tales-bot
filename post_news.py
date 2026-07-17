@@ -46,6 +46,11 @@ LOGO_FILE = "logo.png"   # optional: commit your logo to the repo root to use it
 ELEVENLABS_API_KEY = os.environ.get("ELEVENLABS_API_KEY")
 ELEVENLABS_VOICE_ID = os.environ.get("ELEVENLABS_VOICE_ID", "pNInz6obpgDQGcFmaJgB")  # 'Adam' (deep)
 ELEVENLABS_MODEL = "eleven_turbo_v2"   # cheaper on the free tier
+USAGE_FILE = "el_usage.json"           # shared monthly ElevenLabs budget tracker
+SHORTS_EL_CAP = 4000                   # monthly ElevenLabs char budget reserved for Shorts
+IS_LONGFORM = False                    # this is the Shorts builder
+_el_run_enabled = False                # set per run by the budget policy
+_el_chars = 0                          # chars spent on ElevenLabs this run
 VOICE = "en-US-GuyNeural"   # free fallback: deeper, storyteller-ish
 SPEAKING_RATE = "+8%"
 
@@ -193,9 +198,10 @@ def _brandmark(ov):
 def synth_segment(text, path):
     """Synthesize one segment: ElevenLabs if available, else free edge-tts.
     Normalizes to 24kHz mono mp3 so all segments concat cleanly."""
+    global _el_chars
     raw = path + ".raw.mp3"
     made = False
-    if ELEVENLABS_API_KEY:
+    if _el_run_enabled and ELEVENLABS_API_KEY:
         try:
             r = requests.post(
                 f"https://api.elevenlabs.io/v1/text-to-speech/{ELEVENLABS_VOICE_ID}",
@@ -207,6 +213,7 @@ def synth_segment(text, path):
             if r.status_code == 200 and r.content:
                 with open(raw, "wb") as f:
                     f.write(r.content)
+                _el_chars += len(text)
                 made = True
             else:
                 print(f"   ⚠️ ElevenLabs {r.status_code}: {r.text[:100]} — using free voice")
@@ -389,7 +396,45 @@ def save_posted(links, sha):
         print(f"⚠️ history save failed: {e}")
 
 
-# ---------- Format registry (variety, same space niche) ----------
+# ---------- Shared monthly ElevenLabs usage budget ----------
+def load_usage():
+    month = datetime.utcnow().strftime("%Y-%m")
+    default = {"month": month, "long": 0, "short": 0, "_sha": None}
+    if not GH_TOKEN or not GH_REPO:
+        return default
+    try:
+        owner, repo = GH_REPO.split("/")
+        url = f"https://api.github.com/repos/{owner}/{repo}/contents/{USAGE_FILE}"
+        r = requests.get(url, headers=_gh_headers())
+        if r.status_code == 200:
+            d = r.json()
+            data = json.loads(base64.b64decode(d["content"]).decode())
+            data["_sha"] = d["sha"]
+            if data.get("month") != month:      # new month -> reset counters
+                data = {"month": month, "long": 0, "short": 0, "_sha": d["sha"]}
+            data.setdefault("long", 0)
+            data.setdefault("short", 0)
+            return data
+    except Exception as e:
+        print(f"⚠️ usage load failed: {e}")
+    return default
+
+
+def save_usage(u):
+    if not GH_TOKEN or not GH_REPO:
+        return
+    try:
+        owner, repo = GH_REPO.split("/")
+        url = f"https://api.github.com/repos/{owner}/{repo}/contents/{USAGE_FILE}"
+        sha = u.get("_sha")
+        body = {"month": u["month"], "long": u.get("long", 0), "short": u.get("short", 0)}
+        content = base64.b64encode(json.dumps(body, indent=2).encode()).decode()
+        payload = {"message": "Update ElevenLabs usage", "content": content}
+        if sha:
+            payload["sha"] = sha
+        requests.put(url, headers=_gh_headers(), json=payload)
+    except Exception as e:
+        print(f"⚠️ usage save failed: {e}")
 # Each format: how many beats, the card style, the hook kicker/subtitle, and the
 # extra instruction that shapes the GPT script. Every format demands TRUE facts.
 FORMATS = {
@@ -769,6 +814,18 @@ def main():
     posted, sha = load_posted()
     posted_keys = set(posted)
 
+    # ElevenLabs budget: Shorts use the dramatic voice only until the monthly
+    # Shorts cap is reached; then they fall back to the free voice.
+    global _el_run_enabled
+    usage = load_usage()
+    if ELEVENLABS_API_KEY and usage.get("short", 0) < SHORTS_EL_CAP:
+        _el_run_enabled = True
+        print(f"🎙️ ElevenLabs ON for this Short (Shorts used {usage['short']}/{SHORTS_EL_CAP} chars this month)")
+    else:
+        _el_run_enabled = False
+        if ELEVENLABS_API_KEY:
+            print(f"🎙️ Shorts ElevenLabs budget spent ({usage['short']}/{SHORTS_EL_CAP}) — using free voice")
+
     subject = pick_topic(posted_keys)
     fmt_name = random.choice(list(FORMATS.keys()))
     print(f"🎞️ Format: {fmt_name}")
@@ -827,6 +884,12 @@ def main():
     if ok:
         posted.append(subject["key"])
         save_posted(posted, sha)
+
+    # Record any ElevenLabs characters spent this run.
+    if _el_chars > 0:
+        usage["short"] = usage.get("short", 0) + _el_chars
+        save_usage(usage)
+        print(f"🧾 ElevenLabs: +{_el_chars} chars (Shorts total {usage['short']}/{SHORTS_EL_CAP})")
 
 
 if __name__ == "__main__":
