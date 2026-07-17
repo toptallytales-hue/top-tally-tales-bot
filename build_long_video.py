@@ -24,6 +24,7 @@ from datetime import datetime
 
 import requests
 import edge_tts
+import feedparser
 from PIL import Image, ImageDraw, ImageFont, ImageFilter, ImageEnhance
 
 # === CONFIG ===
@@ -37,9 +38,19 @@ GH_TOKEN = os.environ.get("GH_TOKEN") or os.environ.get("APPROVAL_TOKEN")
 GH_REPO = os.environ.get("GITHUB_REPOSITORY")
 POSTED_FILE = "posted_longform.json"
 
-BRAND = "TOP TALLY TALES"
-VOICE = "en-US-AriaNeural"
-SPEAKING_RATE = "+6%"          # a touch calmer than Shorts for long-form
+BRAND = "TOP SPACE TALES"
+LOGO_FILE = "logo.png"   # optional: commit your logo to the repo root
+
+ELEVENLABS_API_KEY = os.environ.get("ELEVENLABS_API_KEY")
+ELEVENLABS_VOICE_ID = os.environ.get("ELEVENLABS_VOICE_ID", "pNInz6obpgDQGcFmaJgB")  # 'Adam' (deep)
+ELEVENLABS_MODEL = "eleven_turbo_v2"
+VOICE = "en-GB-RyanNeural"   # free fallback: British documentary storyteller
+SPEAKING_RATE = "+4%"        # calmer for long-form
+
+SPACE_FEEDS = [
+    "https://www.sciencedaily.com/rss/space_time.xml",
+    "https://phys.org/rss-feed/space-news/",
+]
 NUM_CHAPTERS = 4
 
 W, H = 1920, 1080              # 16:9 landscape
@@ -98,6 +109,120 @@ def _shadow(draw, xy, text, font, fill):
     x, y = xy
     draw.text((x + 3, y + 3), text, font=font, fill=(0, 0, 0, 190))
     draw.text((x, y), text, font=font, fill=fill)
+
+
+_LOGO_CACHE = {}
+
+
+def _load_logo():
+    if "img" in _LOGO_CACHE:
+        return _LOGO_CACHE["img"]
+    img = None
+    for p in (LOGO_FILE, "logo.png", "Logo.png"):
+        if os.path.exists(p):
+            try:
+                img = Image.open(p).convert("RGBA")
+                break
+            except Exception:
+                pass
+    _LOGO_CACHE["img"] = img
+    return img
+
+
+def _brandmark(ov):
+    logo = _load_logo()
+    draw = ImageDraw.Draw(ov)
+    if logo is not None:
+        h = 84
+        w = max(int(logo.width * h / logo.height), 1)
+        lr = logo.resize((w, h), Image.LANCZOS)
+        ov.paste(lr, (56, 44), lr)
+        _shadow(draw, (56 + w + 20, 66), BRAND, _font(44), WHITE)
+    else:
+        _shadow(draw, (60, 54), BRAND, _font(44), WHITE)
+
+
+def synth_segment(text, path):
+    """ElevenLabs (dramatic) if available, else free edge-tts; normalized for concat."""
+    raw = path + ".raw.mp3"
+    made = False
+    if ELEVENLABS_API_KEY:
+        try:
+            r = requests.post(
+                f"https://api.elevenlabs.io/v1/text-to-speech/{ELEVENLABS_VOICE_ID}",
+                headers={"xi-api-key": ELEVENLABS_API_KEY, "Content-Type": "application/json"},
+                json={"text": text, "model_id": ELEVENLABS_MODEL,
+                      "voice_settings": {"stability": 0.45, "similarity_boost": 0.75, "style": 0.35}},
+                timeout=60,
+            )
+            if r.status_code == 200 and r.content:
+                with open(raw, "wb") as f:
+                    f.write(r.content)
+                made = True
+            else:
+                print(f"   ⚠️ ElevenLabs {r.status_code}: {r.text[:100]} — using free voice")
+        except Exception as e:
+            print(f"   ⚠️ ElevenLabs failed ({e}) — using free voice")
+    if not made:
+        asyncio.run(edge_tts.Communicate(text, VOICE, rate=SPEAKING_RATE).save(raw))
+    subprocess.run(["ffmpeg", "-y", "-i", raw, "-ar", "24000", "-ac", "1", "-b:a", "48k", path],
+                   check=True, capture_output=True)
+    try:
+        os.remove(raw)
+    except Exception:
+        pass
+    return path
+
+
+def _subject_from_headline(headline):
+    if OPENAI_API_KEY:
+        try:
+            r = requests.post(
+                "https://api.openai.com/v1/chat/completions",
+                headers={"Authorization": f"Bearer {OPENAI_API_KEY}", "Content-Type": "application/json"},
+                json={"model": "gpt-4o-mini", "messages": [
+                    {"role": "system", "content": (
+                        "From this space/science news headline, extract the core subject. "
+                        'Respond ONLY as JSON: {"topic":"2-4 word subject","query":"1-2 word stock term"}. '
+                        'If not space/science, return {"topic":"","query":""}.')},
+                    {"role": "user", "content": headline},
+                ]},
+                timeout=30,
+            )
+            if r.status_code == 200:
+                raw = r.json()["choices"][0]["message"]["content"].strip()
+                raw = re.sub(r"^```(json)?|```$", "", raw, flags=re.MULTILINE).strip()
+                d = json.loads(raw)
+                if d.get("topic"):
+                    return d["topic"].strip(), (d.get("query") or "space").strip()
+        except Exception:
+            pass
+    words = [w for w in re.findall(r"[A-Za-z]+", headline) if len(w) > 3][:4]
+    return (" ".join(words).title() if words else ""), "space"
+
+
+def trending_subject(posted_keys):
+    for url in SPACE_FEEDS:
+        try:
+            entries = feedparser.parse(url).entries[:12]
+        except Exception:
+            continue
+        for e in entries:
+            title = re.sub(r"\s+", " ", e.get("title", "")).strip()
+            if not title:
+                continue
+            key = _subject_key(title)
+            if key in posted_keys:
+                continue
+            topic, query = _subject_from_headline(title)
+            if topic:
+                print(f"📈 Trending subject: {topic}  (from: {title[:60]})")
+                return {"topic": topic, "topic_query": query, "key": key}
+    return None
+
+
+def pick_topic(posted_keys):
+    return trending_subject(posted_keys) or pick_subject(posted_keys)
 
 
 def _wrap(draw, text, font, maxw):
@@ -275,7 +400,7 @@ def _vgrad_rgb(top, bottom):
 def make_intro_overlay(topic, path):
     ov = _scrim()
     draw = ImageDraw.Draw(ov)
-    _shadow(draw, (60, 54), BRAND, _font(44), WHITE)
+    _brandmark(ov)
     kf = _font(60)
     tf = _font(150)
     lines = _wrap(draw, topic.upper(), tf, W - 300)
@@ -295,7 +420,7 @@ def make_intro_overlay(topic, path):
 def make_chapter_overlay(n, heading, path):
     ov = _scrim()
     draw = ImageDraw.Draw(ov)
-    _shadow(draw, (60, 54), BRAND, _font(44), WHITE)
+    _brandmark(ov)
     cf = _font(56)
     hf = _font(120)
     lines = _wrap(draw, heading.upper(), hf, W - 240)
@@ -324,7 +449,7 @@ def make_beat_overlay(text, path):
         band.putpixel((0, y), (0, 0, 0, a))
     ov = Image.alpha_composite(ov, band.resize((W, H)))
     draw = ImageDraw.Draw(ov)
-    _shadow(draw, (60, 54), BRAND, _font(40), WHITE)
+    _brandmark(ov)
     bf = _font(64)
     lines = _wrap(draw, text, bf, W - 260)[:3]
     line_h = bf.size + 14
@@ -341,7 +466,7 @@ def make_beat_overlay(text, path):
 def make_outro_overlay(path):
     ov = _scrim()
     draw = ImageDraw.Draw(ov)
-    _shadow(draw, (60, 54), BRAND, _font(44), WHITE)
+    _brandmark(ov)
     bf, sf = _font(130), _font(56)
     lines = _wrap(draw, "SUBSCRIBE FOR MORE", bf, W - 240)
     block = (bf.size + 10) * len(lines) + 40 + sf.size
@@ -378,7 +503,7 @@ def build_narration(segment_texts):
     seg_files, durs = [], []
     for i, t in enumerate(segment_texts):
         p = f"seg_{i}.mp3"
-        asyncio.run(_synth(t, p))
+        synth_segment(t, p)
         seg_files.append(p)
         durs.append(audio_duration(p))
     for name, dur in (("sil.mp3", GAP), ("tail.mp3", TAIL)):
@@ -469,7 +594,7 @@ def main():
     os.makedirs(CLIP_DIR, exist_ok=True)
 
     posted, sha = load_posted()
-    subject = pick_subject(set(posted))
+    subject = pick_topic(set(posted))
     script = generate_script(subject)
     topic = subject["topic"]
 
