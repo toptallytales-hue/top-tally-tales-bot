@@ -64,66 +64,58 @@ NUM_FACTS = 4
 # Curated, evergreen space & science subjects — no news, no real people, no
 # fabrication risk. The bot rotates through these and remembers what it posted.
 SUBJECTS = [
-    ("Black Holes", "black hole space"),
-    ("The Sun", "sun solar"),
-    ("Jupiter", "jupiter planet"),
-    ("Saturn's Rings", "saturn planet"),
-    ("Mars", "mars planet surface"),
-    ("The Moon", "moon surface"),
-    ("Neutron Stars", "star space"),
-    ("The Milky Way", "galaxy milky way"),
-    ("Supernovae", "supernova nebula"),
-    ("The International Space Station", "space station orbit"),
-    ("Venus", "venus planet"),
-    ("Mercury", "planet space"),
-    ("Neptune", "neptune planet"),
-    ("Uranus", "planet space"),
-    ("Pluto", "dwarf planet space"),
-    ("Comets", "comet space"),
-    ("Asteroids", "asteroid space"),
-    ("The James Webb Telescope", "telescope space stars"),
-    ("The Hubble Telescope", "telescope galaxy"),
-    ("Nebulae", "nebula space"),
-    ("Galaxies", "galaxy space"),
-    ("The Big Bang", "universe stars"),
-    ("Dark Matter", "universe galaxy"),
-    ("Solar Eclipses", "solar eclipse"),
-    ("The Northern Lights", "aurora northern lights"),
-    ("Meteor Showers", "meteor night sky"),
-    ("The Voyager Probes", "spacecraft space"),
-    ("Rockets", "rocket launch"),
-    ("Astronauts", "astronaut space"),
-    ("Zero Gravity", "astronaut floating space"),
-    ("The Speed of Light", "light space stars"),
-    ("Exoplanets", "planet space stars"),
-    ("The Kuiper Belt", "space stars"),
-    ("Solar Flares", "sun solar flare"),
-    ("Gravity", "space planet orbit"),
-    ("The Andromeda Galaxy", "galaxy space"),
-    ("Cosmic Radiation", "space stars universe"),
-    ("Star Formation", "nebula stars"),
-    ("Red Dwarfs", "star space"),
-    ("White Dwarfs", "star space"),
-    ("The Oort Cloud", "comet space"),
-    ("Space Junk", "satellite earth orbit"),
-    ("Satellites", "satellite orbit earth"),
-    ("The Aurora on Other Planets", "aurora planet"),
-    ("Titan (Saturn's Moon)", "moon space"),
-    ("Europa (Jupiter's Moon)", "moon ice space"),
-    ("The Sun's Corona", "sun corona"),
-    ("Wormholes", "space time universe"),
-    ("The Expanding Universe", "universe galaxy"),
-    ("Quasars", "galaxy space"),
-    ("Pulsars", "star space"),
-    ("Cosmic Dust", "nebula space"),
-    ("The Habitable Zone", "planet space"),
-    ("Space Suits", "astronaut spacesuit"),
-    ("Mars Rovers", "mars rover"),
-    ("The Kármán Line", "earth atmosphere space"),
-    ("Gas Giants", "jupiter planet"),
-    ("Ice Giants", "neptune planet"),
-    ("Solar Wind", "sun solar"),
-    ("The Life Cycle of Stars", "stars nebula"),
+    # Weird/specific/pictureable subjects — modeled on your winners.
+    # Pattern: something you can PICTURE or EXPERIENCE, not a textbook chapter title.
+    ("Breathing on Venus", "venus clouds"),
+    ("Liquid Nitrogen in Space", "liquid nitrogen"),
+    ("The Youngest Planet Ever Found", "exoplanet"),
+    ("A Storm on Jupiter Bigger Than Earth", "jupiter storm"),
+    ("Saturn's Perfect Hexagon Storm", "saturn hexagon"),
+    ("Walking on Neutron Star Surface", "neutron star"),
+    ("The Diamond Rain on Neptune", "neptune planet"),
+    ("A Day on Mercury (176 Earth Days)", "mercury surface"),
+    ("The Sound of a Black Hole", "black hole"),
+    ("Swimming in Titan's Methane Lakes", "titan moon"),
+    ("Europa's Hidden Ocean Under Ice", "europa moon ice"),
+    ("The Coldest Place in the Universe", "deep space nebula"),
+    ("The Hottest Planet (Not the Closest)", "venus surface"),
+    ("What Happens Inside a Wormhole", "wormhole space"),
+    ("A Teaspoon of Neutron Star", "neutron star"),
+    ("The Star That's Bigger Than Our Solar System", "giant star"),
+    ("Falling Into a Black Hole", "black hole"),
+    ("The Fastest Spinning Object in Space", "pulsar star"),
+    ("Mars's Volcano 3x Taller Than Everest", "olympus mons mars"),
+    ("The Planet That Rains Glass Sideways", "exoplanet"),
+    ("A Year That Lasts 8 Hours", "exoplanet orbit"),
+    ("The Moon Drifting Away from Earth", "moon earth"),
+    ("The Galaxy Heading Straight for Us", "andromeda galaxy"),
+    ("Stars That Shouldn't Exist", "ancient star"),
+    ("The Exploding Star Brighter Than a Galaxy", "supernova"),
+    ("Pluto's Heart-Shaped Glacier", "pluto surface"),
+    ("The Lake of Lava on Jupiter's Moon", "io moon volcano"),
+    ("The Silence of Space", "astronaut space"),
+    ("What Sunlight Looks Like on Pluto", "pluto"),
+    ("The Asteroid That Killed the Dinosaurs", "asteroid impact"),
+    ("Water Floating in Space", "astronaut water"),
+    ("A Sunset on Mars (It's Blue)", "mars sunset"),
+    ("The Rings Around a Tiny Asteroid", "chariklo asteroid"),
+    ("Lightning on Other Planets", "jupiter lightning"),
+    ("The Smell of Space", "astronaut spacesuit"),
+    ("A Planet Made Entirely of Diamond", "diamond planet"),
+    ("The Star Made of Crystal", "white dwarf star"),
+    ("Earth's Backup Moons", "asteroid earth orbit"),
+    ("The Deepest Hole Ever Dug (and What Was Found)", "earth deep"),
+    ("The Cannibal Galaxy Eating Its Neighbors", "galaxy collision"),
+    ("A Cloud Bigger Than the Solar System", "nebula space"),
+    ("The Voyager Golden Record", "voyager spacecraft"),
+    ("Astronaut Bones After a Year in Space", "astronaut floating"),
+    ("The Radio Signal That Lasted 72 Seconds", "radio telescope"),
+    ("What's at the Edge of the Observable Universe", "deep space"),
+    ("The Ocean on a Moon of Saturn", "enceladus moon"),
+    ("Moonquakes (Yes, the Moon Has Earthquakes)", "moon surface"),
+    ("The Planet with Four Suns", "exoplanet star"),
+    ("A Comet Bigger Than the Sun's Atmosphere", "comet space"),
+    ("The Most Distant Photo Ever Taken", "pale blue dot earth"),
 ]
 
 W, H = 1080, 1920
@@ -438,54 +430,51 @@ def save_usage(u):
 # Each format: how many beats, the card style, the hook kicker/subtitle, and the
 # extra instruction that shapes the GPT script. Every format demands TRUE facts.
 FORMATS = {
+    "whatif": {
+        "beats": 4, "style": "statement", "kicker": "WHAT IF?",
+        "sub": "A SPACE THOUGHT EXPERIMENT", "beat_label": "",
+        "instr": "Pose a vivid, pictureable 'what if' about the subject that makes someone stop "
+                 "scrolling (e.g. 'What if you could swim in Titan's lakes?'). Answer in 4 short "
+                 "beats grounded ENTIRELY in real, accepted physics. Make each beat visual and "
+                 "sensory — something the viewer can picture. No fabrication.",
+        "outro_line": "Follow for more space what-ifs.",
+        "weight": 30,
+    },
+    "top5": {
+        "beats": 5, "style": "numbered", "kicker": "TOP 5",
+        "sub": "COUNTING DOWN", "beat_label": "",
+        "instr": "Give a TOP 5 true list related to the subject (facts, records, features). "
+                 "Each item one short punchy sentence with a specific number or comparison "
+                 "that makes the viewer go 'wait, really?'. Most impressive last.",
+        "outro_line": "Follow for more space countdowns.",
+        "weight": 30,
+    },
     "facts": {
         "beats": 4, "style": "numbered", "kicker": "DID YOU KNOW?",
         "sub": "4 FACTS THAT WILL SURPRISE YOU", "beat_label": "",
-        "instr": "Give EXACTLY 4 genuinely surprising, well-established facts about the subject, "
-                 "each one short punchy sentence.",
+        "instr": "Give EXACTLY 4 genuinely surprising, well-established facts about the subject. "
+                 "Each one a short punchy sentence with a concrete detail (a number, a comparison, "
+                 "something you can picture). Avoid vague words like 'fascinating' or 'unique'.",
         "outro_line": "Follow for more space facts every day.",
-    },
-    "story": {
-        "beats": 4, "style": "statement", "kicker": "THE STORY OF",
-        "sub": "A SHORT SPACE STORY", "beat_label": "",
-        "instr": "Tell the true story of the subject as 4 short chronological beats (setup, "
-                 "discovery/turning point, key moment, meaning today). Each beat one sentence.",
-        "outro_line": "Follow for more space stories.",
+        "weight": 20,
     },
     "single": {
         "beats": 3, "style": "statement", "kicker": "DID YOU KNOW?",
         "sub": "ONE MIND-BLOWING FACT", "beat_label": "",
-        "instr": "Pick ONE genuinely astonishing true fact about the subject, then explain it "
-                 "across 3 short escalating beats (the fact, why it's true, the wild implication).",
+        "instr": "Pick ONE genuinely astonishing true fact about the subject — something with a "
+                 "specific number or sensory detail. Explain it across 3 short escalating beats "
+                 "(the fact, why it's true, the wild implication).",
         "outro_line": "Follow for more space facts.",
+        "weight": 15,
     },
     "versus": {
         "beats": 4, "style": "statement", "kicker": "SPACE SHOWDOWN",
         "sub": "WHO WINS?", "beat_label": "",
         "instr": "Compare the subject with its most natural space counterpart. In 'topic' return "
-                 "the matchup as 'A vs B'. Give 4 short factual comparison beats (size, power, etc.).",
+                 "the matchup as 'A vs B'. Give 4 short factual comparison beats with specific "
+                 "numbers (size, power, temperature, speed).",
         "outro_line": "Follow for more space showdowns.",
-    },
-    "whatif": {
-        "beats": 4, "style": "statement", "kicker": "WHAT IF?",
-        "sub": "A SPACE THOUGHT EXPERIMENT", "beat_label": "",
-        "instr": "Pose a 'what if' thought experiment about the subject, then answer it in 4 short "
-                 "beats grounded ENTIRELY in real, accepted physics. No fabrication.",
-        "outro_line": "Follow for more space what-ifs.",
-    },
-    "top5": {
-        "beats": 5, "style": "numbered", "kicker": "TOP 5",
-        "sub": "COUNTING DOWN", "beat_label": "",
-        "instr": "Give a TOP 5 true list related to the subject (e.g. facts, records, features). "
-                 "Each item one short punchy sentence, most impressive last.",
-        "outro_line": "Follow for more space countdowns.",
-    },
-    "howitworks": {
-        "beats": 4, "style": "statement", "kicker": "HOW IT WORKS",
-        "sub": "EXPLAINED SIMPLY", "beat_label": "",
-        "instr": "Explain how the subject works in 4 short, simple, accurate beats a beginner "
-                 "understands. Real science only.",
-        "outro_line": "Follow for more space explainers.",
+        "weight": 5,
     },
 }
 
@@ -497,6 +486,16 @@ def generate_content(subject, fmt_name):
     base_q = subject["topic_query"]
     nb = fmt["beats"]
     print(f"🤖 Generating '{fmt_name}' about {topic}...")
+
+    # Queries that are NOT space-related and would produce irrelevant footage.
+    BAD_QUERIES = {"forest", "nature", "water", "mountain", "city", "abstract", "ocean",
+                   "river", "sunset", "landscape", "people", "office", "tree", "field",
+                   "building", "road", "sky", "clouds", "rain", "snow", "fire", "animal"}
+
+    def _safe_query(q, fallback):
+        if q.lower().strip() in BAD_QUERIES:
+            return fallback
+        return q
 
     fb_beats = [{"say": f"{topic} is one of the most fascinating things in the universe.",
                  "show": topic, "query": base_q}]
@@ -512,19 +511,31 @@ def generate_content(subject, fmt_name):
             headers={"Authorization": f"Bearer {OPENAI_API_KEY}", "Content-Type": "application/json"},
             json={"model": "gpt-4o-mini", "messages": [
                 {"role": "system", "content": (
-                    "You script accurate, engaging space & science Shorts. "
-                    "CRITICAL: everything must be TRUE, well-established science — never invent, exaggerate, "
-                    "or state anything uncertain as fact. If unsure, pick a safer well-known point. "
-                    "Retention matters: the hook must stop the scroll instantly (no greetings). "
-                    f"FORMAT INSTRUCTION: {fmt['instr']} "
-                    "Respond ONLY with valid JSON: "
-                    '{"topic":"...","hook":"...","title":"...","beats":[{"say":"...","show":"...","query":"..."}]}. '
-                    "topic: the on-screen subject (keep the given subject unless the format needs a matchup). "
-                    f"beats: EXACTLY {nb} items. "
-                    "say = the spoken sentence (max ~18 words). "
-                    "show = a SHORT on-screen version (max ~10 words). "
-                    "query = 1-2 word concrete space stock-video term (e.g. 'galaxy','nebula','rocket'). "
-                    "title: honest, curiosity-driven, under 90 chars, ending with #Shorts. No misleading claims. "
+                    "You script accurate, engaging space & science YouTube Shorts. "
+                    "CRITICAL: everything must be TRUE, well-established science — never invent or exaggerate. "
+                    "\n\nRETENTION RULES (follow these exactly):\n"
+                    "- HOOK: the first spoken sentence must be CONCRETE and SENSORY — something the viewer "
+                    "can picture or feel. Good: 'Imagine standing on a neutron star — you'd weigh a billion "
+                    "tonnes.' Bad: 'Let's explore neutron stars.' NEVER start with 'Let's explore/discover/dive into'.\n"
+                    "- TITLE: must be SPECIFIC, STRANGE, and PICTUREABLE. Good: 'What Would It Be Like to "
+                    "Swim in Titan's Lakes?' or '5 Facts About Black Holes That Don't Make Sense'. "
+                    "Bad: 'Exploring Saturn's Unique Weather' or 'Understanding Neutron Stars'. "
+                    "NEVER use the words: Exploring, Understanding, Mysteries, Wonders, The Role of, Journey.\n"
+                    f"\nFORMAT: {fmt['instr']}\n"
+                    "\nRespond ONLY with valid JSON:\n"
+                    '{"topic":"...","hook":"...","title":"...","beats":[{"say":"...","show":"...","query":"..."}]}.\n'
+                    "topic: the on-screen subject (keep the given subject unless the format needs a matchup).\n"
+                    f"beats: EXACTLY {nb} items.\n"
+                    "say = the spoken sentence (max ~18 words, concrete, with a number or comparison).\n"
+                    "show = SHORT on-screen text (max ~10 words).\n"
+                    "query = 1-2 word CONCRETE stock-video term that a viewer would EXPECT to see for this "
+                    "specific space fact. Must be visually relevant to the SUBJECT, not generic. "
+                    "Good queries: 'black hole', 'jupiter storm', 'neutron star', 'mars surface', "
+                    "'astronaut floating', 'supernova explosion', 'saturn rings'. "
+                    "BAD queries (NEVER use): 'forest', 'nature', 'water', 'mountain', 'city', 'abstract'. "
+                    "If the subject is about a planet, the query must reference that planet or its features. "
+                    "If about a star type, reference that star type. ALWAYS space-related.\n"
+                    "title: specific+strange+pictureable, under 90 chars, ending with #Shorts. "
                     "No emojis/hashtags inside say/show/hook, no URLs."
                 )},
                 {"role": "user", "content": f"Subject: {topic}"},
@@ -542,7 +553,7 @@ def generate_content(subject, fmt_name):
                     continue
                 beats.append({"say": say,
                               "show": str(b.get("show", say)).strip() or say,
-                              "query": str(b.get("query", base_q)).strip() or base_q})
+                              "query": _safe_query(str(b.get("query", base_q)).strip() or base_q, base_q)})
             beats = beats[:nb]
             if d.get("hook") and len(beats) >= max(3, nb - 1) and d.get("title"):
                 return {"topic": str(d.get("topic", topic)).strip() or topic,
@@ -827,7 +838,11 @@ def main():
             print(f"🎙️ Shorts ElevenLabs budget spent ({usage['short']}/{SHORTS_EL_CAP}) — using free voice")
 
     subject = pick_topic(posted_keys)
-    fmt_name = random.choice(list(FORMATS.keys()))
+    fmt_name = random.choices(
+        list(FORMATS.keys()),
+        weights=[FORMATS[f]["weight"] for f in FORMATS],
+        k=1,
+    )[0]
     print(f"🎞️ Format: {fmt_name}")
 
     data, fmt = generate_content(subject, fmt_name)
