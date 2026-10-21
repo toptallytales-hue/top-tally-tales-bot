@@ -608,102 +608,67 @@ def _fit_font(draw, text, maxw, start, min_size=44):
 
 
 def make_hook_overlay(topic, path, kicker="DID YOU KNOW?", subtitle=None):
-    ov = _scrim()
+    """Hook overlay: NO text card, NO brand — just a transparent layer.
+    The opening frame is pure subject footage with motion; the voiceover
+    carries the hook. This is the #1 retention fix: first frame = subject."""
+    ov = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    ov.save(path)
+    return path
+
+
+def make_caption_overlay(text, path):
+    """Bottom-positioned subtitle caption — no brand, no number badge, no center card.
+    Just clean white text at the bottom with a soft gradient scrim behind it.
+    This looks like native YouTube captions, not an automated template."""
+    ov = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    # Bottom scrim: gradient from transparent to semi-dark (lower 35%)
+    scrim_start = int(H * 0.65)
+    scrim_h = H - scrim_start
+    scrim = Image.new("RGBA", (1, scrim_h))
+    for sy in range(scrim_h):
+        a = int(160 * (sy / scrim_h))
+        scrim.putpixel((0, sy), (0, 0, 0, a))
+    scrim = scrim.resize((W, scrim_h))
+    ov.paste(scrim, (0, scrim_start), scrim)
     draw = ImageDraw.Draw(ov)
-    _brandmark(ov)
-    margin = 80
-    maxw = W - margin * 2
-    kf = _font(56)
-    tf = _fit_font(draw, topic.upper(), maxw, 140, min_size=54)
-    topic_lines = _wrap(draw, topic.upper(), tf, maxw)
-    sub = subtitle if subtitle is not None else f"{NUM_FACTS} FACTS THAT WILL SURPRISE YOU"
-    sf = _fit_font(draw, sub, maxw, 52, min_size=32)
-    block = kf.size + 40 + (tf.size + 12) * len(topic_lines) + 40 + sf.size
-    y = (H - block) // 2
-    kw = draw.textlength(kicker, font=kf)
-    _shadow_text(draw, ((W - kw) / 2, y), kicker, kf, YELLOW)
-    y += kf.size + 40
-    y = _center_shadow(draw, y, topic.upper(), tf, WHITE, maxw)
-    y += 26
-    sw = draw.textlength(sub, font=sf)
-    _shadow_text(draw, ((W - sw) / 2, y), sub, sf, WHITE)
+    maxw = W - 120
+    tf = _font(72)
+    lines = _wrap(draw, text, tf, maxw)
+    if len(lines) > 4:
+        tf = _font(58)
+        lines = _wrap(draw, text, tf, maxw)
+    # Position text above the very bottom (safe zone for YouTube controls)
+    total_h = (tf.size + 14) * len(lines)
+    y = H - 280 - total_h
+    for ln in lines:
+        lw = draw.textlength(ln, font=tf)
+        _shadow_text(draw, ((W - lw) / 2, y), ln, tf, WHITE)
+        y += tf.size + 14
     ov.save(path)
     return path
 
 
 def make_fact_overlay(n, total, fact, path, accent):
-    ov = _scrim()
-    draw = ImageDraw.Draw(ov)
-    _brandmark(ov)
-    r = 92
-    cx, cy = W // 2, 470
-    draw.ellipse([cx - r, cy - r, cx + r, cy + r], fill=(accent[0], accent[1], accent[2], 255))
-    nf = _font(100)
-    ns = str(n)
-    nw = draw.textlength(ns, font=nf)
-    draw.text((cx - nw / 2, cy - nf.size / 2 - 8), ns, font=nf, fill=WHITE)
-    ff = _font(82)
-    y = cy + r + 80
-    for ln in _wrap(draw, fact, ff, W - 160):
-        lw = draw.textlength(ln, font=ff)
-        _shadow_text(draw, ((W - lw) / 2, y), ln, ff, WHITE)
-        y += ff.size + 16
-    # progress dots
-    dot, gp = 20, 34
-    tw = total * dot + (total - 1) * gp
-    x = (W - tw) // 2
-    for i in range(total):
-        draw.ellipse([x, H - 150, x + dot, H - 150 + dot],
-                     fill=YELLOW if i < n else (255, 255, 255, 150))
-        x += dot + gp
-    ov.save(path)
-    return path
+    """Redirects to subtitle-style caption — no center card, no brand."""
+    return make_caption_overlay(fact, path)
 
 
 def make_statement_overlay(label, text, path, n=None, total=None):
-    """A non-numbered beat card for stories, explainers, comparisons, etc."""
-    ov = _scrim()
-    draw = ImageDraw.Draw(ov)
-    _brandmark(ov)
-    maxw = W - 160
-    lf = _font(48)
-    if label:
-        lw = draw.textlength(label, font=lf)
-        _shadow_text(draw, ((W - lw) / 2, 360), label, lf, YELLOW)
-    tf = _font(80)
-    lines = _wrap(draw, text, tf, maxw)
-    if len(lines) > 6:
-        tf = _font(64)
-        lines = _wrap(draw, text, tf, maxw)
-    total_h = (tf.size + 16) * len(lines)
-    y = (H - total_h) // 2 + 30
-    for ln in lines:
-        tw = draw.textlength(ln, font=tf)
-        _shadow_text(draw, ((W - tw) / 2, y), ln, tf, WHITE)
-        y += tf.size + 16
-    if n and total:
-        dot, gp = 20, 34
-        wtot = total * dot + (total - 1) * gp
-        x = (W - wtot) // 2
-        for i in range(total):
-            draw.ellipse([x, H - 150, x + dot, H - 150 + dot],
-                         fill=YELLOW if i < n else (255, 255, 255, 150))
-            x += dot + gp
-    ov.save(path)
-    return path
+    """Redirects to subtitle-style caption — no center card, no brand."""
+    return make_caption_overlay(text, path)
 
 
 def make_outro_overlay(path):
+    """Clean outro — no brand watermark. Just 'Follow for more' centered."""
     ov = _scrim()
     draw = ImageDraw.Draw(ov)
-    _brandmark(ov)
-    bf, sf = _font(120), _font(50)
-    lines = _wrap(draw, "FOLLOW FOR MORE", bf, W - 120)
-    block = (bf.size + 10) * len(lines) + 40 + sf.size
+    bf = _font(110)
+    sf = _font(46)
+    block = bf.size + 50 + sf.size
     y = (H - block) // 2
     y = _center_shadow(draw, y, "FOLLOW FOR MORE", bf, WHITE, W - 120)
-    y += 24
-    sub = "MIND-BLOWING FACTS DAILY"
+    y += 34
+    sub = "SPACE FACTS EVERY DAY"
     sw = draw.textlength(sub, font=sf)
     _shadow_text(draw, ((W - sw) / 2, y), sub, sf, YELLOW)
     ov.save(path)
