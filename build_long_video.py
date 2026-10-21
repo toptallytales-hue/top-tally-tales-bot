@@ -1,10 +1,13 @@
 """
-TopTallyTales — long-form (3-4 min) 16:9 SPACE deep-dive.
+TopTallyTales — long-form (8-10 min) 16:9 SPACE deep-dive.
 
-Picks one space subject, GPT writes an accurate ~550-650 word narration split into
-an intro + 4 chapters + outro. Each chapter has several beats, each beat over its own
+Picks one space subject, GPT writes an accurate ~1200-1400 word narration split into
+an intro + 6 chapters + outro. Each chapter has 4-5 beats, each beat over its own
 relevant Pexels clip (landscape). Chapter title cards give rhythm. Neural voice,
 perfectly synced, uploaded to the same channel as a regular (non-Short) video.
+
+Designed to drive subscribers: Shorts bring reach, but long videos build watch time
+and make people subscribe. Series format ("What if Earth…") keeps them coming back.
 
 Reuses the same free stack: GPT + Pexels + edge-tts + Pillow + FFmpeg.
 
@@ -38,24 +41,16 @@ GH_TOKEN = os.environ.get("GH_TOKEN") or os.environ.get("APPROVAL_TOKEN")
 GH_REPO = os.environ.get("GITHUB_REPOSITORY")
 POSTED_FILE = "posted_longform.json"
 
-BRAND = "TOP SPACE TALES"
 LOGO_FILE = "logo.png"   # optional: commit your logo to the repo root
 
-ELEVENLABS_API_KEY = os.environ.get("ELEVENLABS_API_KEY")
-ELEVENLABS_VOICE_ID = os.environ.get("ELEVENLABS_VOICE_ID", "pNInz6obpgDQGcFmaJgB")  # 'Adam' (deep)
-ELEVENLABS_MODEL = "eleven_turbo_v2"
-USAGE_FILE = "el_usage.json"    # shared with the Shorts builder (same repo)
-IS_LONGFORM = True
-_el_run_enabled = True          # long videos always use ElevenLabs when a key is set
-_el_chars = 0
-VOICE = "en-GB-RyanNeural"   # free fallback: British documentary storyteller
-SPEAKING_RATE = "+4%"        # calmer for long-form
+VOICE = "en-GB-RyanNeural"   # free British documentary storyteller
+SPEAKING_RATE = "+0%"        # natural pace for long-form (slower = more watch time)
 
 SPACE_FEEDS = [
     "https://www.sciencedaily.com/rss/space_time.xml",
     "https://phys.org/rss-feed/space-news/",
 ]
-NUM_CHAPTERS = 4
+NUM_CHAPTERS = 7
 
 W, H = 1920, 1080              # 16:9 landscape
 FPS = 30
@@ -78,19 +73,41 @@ PALETTE = [
     ((46, 160, 90), (10, 46, 28)),
 ]
 
-# Curated space subjects (same spirit as the Shorts pool)
+# Viral/trending "What If" + mystery subjects — these pull views
 SUBJECTS = [
-    ("Black Holes", "black hole"), ("The Sun", "sun"), ("Jupiter", "jupiter"),
-    ("Saturn's Rings", "saturn"), ("Mars", "mars"), ("The Moon", "moon"),
-    ("The Milky Way", "galaxy"), ("Neutron Stars", "neutron star"),
-    ("Supernovae", "supernova"), ("The Big Bang", "universe"),
-    ("Voyager Probes", "spacecraft"), ("The James Webb Telescope", "telescope"),
-    ("Comets", "comet"), ("The International Space Station", "space station"),
-    ("Exoplanets", "exoplanet"), ("Nebulae", "nebula"), ("Dark Matter", "galaxy"),
-    ("The Kuiper Belt", "asteroid"), ("Pulsars", "pulsar"), ("The Andromeda Galaxy", "galaxy"),
-    ("Mercury", "planet"), ("Venus", "planet"), ("Uranus", "planet"), ("Neptune", "planet"),
-    ("Pluto", "pluto"), ("The Apollo Missions", "moon landing"), ("Solar Flares", "sun"),
-    ("Auroras", "aurora"), ("Meteor Showers", "meteor"), ("The Oort Cloud", "space"),
+    # "What If" scenarios (highest CTR on YouTube)
+    ("What If Earth Stopped Spinning", "earth rotation"),
+    ("What If the Sun Disappeared", "sun explosion"),
+    ("What If You Fell Into a Black Hole", "black hole"),
+    ("What If Jupiter Exploded", "jupiter"),
+    ("What If the Moon Vanished Tonight", "moon"),
+    ("What If We Moved to Mars", "mars colony"),
+    ("What If Andromeda Hit the Milky Way", "galaxy collision"),
+    ("What If a Neutron Star Entered Our Solar System", "neutron star"),
+    ("What If Earth Had Saturn's Rings", "saturn rings"),
+    ("What If the Sun Was Twice as Big", "sun"),
+    ("What If Humans Lived on Titan", "titan saturn"),
+    ("What If a Supernova Exploded Near Earth", "supernova"),
+    ("What If We Could Travel at Light Speed", "spacecraft"),
+    ("What If Earth Was in a Binary Star System", "binary stars"),
+    ("What If Venus Was Habitable Again", "venus planet"),
+    # Space mysteries (high retention)
+    ("The Strangest Things Found in Space", "nebula galaxy"),
+    ("Why Is Space Silent", "deep space"),
+    ("The Darkest Secrets of Black Holes", "black hole"),
+    ("What NASA Won't Tell You About Mars", "mars surface"),
+    ("The Most Terrifying Sounds Recorded in Space", "space station"),
+    ("How the Universe Will End", "universe"),
+    ("The Scariest Things About Deep Space", "deep space"),
+    ("Stars That Should Not Exist", "star galaxy"),
+    ("The Most Dangerous Places in the Universe", "asteroid"),
+    ("Planets That Could Support Life Right Now", "exoplanet"),
+    # Classic deep dives (evergreen)
+    ("The Complete Story of the James Webb Telescope", "telescope"),
+    ("Everything Wrong With Our Understanding of Dark Matter", "galaxy"),
+    ("The Voyager Probes Are Still Sending Signals", "spacecraft"),
+    ("Why We May Never Leave the Solar System", "rocket launch"),
+    ("The Real Reason Pluto Lost Its Planet Status", "pluto"),
 ]
 
 
@@ -147,30 +164,9 @@ def _brandmark(ov):
 
 
 def synth_segment(text, path):
-    """ElevenLabs (dramatic) if available, else free edge-tts; normalized for concat."""
-    global _el_chars
+    """Free edge-tts voice — no paid API needed."""
     raw = path + ".raw.mp3"
-    made = False
-    if _el_run_enabled and ELEVENLABS_API_KEY:
-        try:
-            r = requests.post(
-                f"https://api.elevenlabs.io/v1/text-to-speech/{ELEVENLABS_VOICE_ID}",
-                headers={"xi-api-key": ELEVENLABS_API_KEY, "Content-Type": "application/json"},
-                json={"text": text, "model_id": ELEVENLABS_MODEL,
-                      "voice_settings": {"stability": 0.45, "similarity_boost": 0.75, "style": 0.35}},
-                timeout=60,
-            )
-            if r.status_code == 200 and r.content:
-                with open(raw, "wb") as f:
-                    f.write(r.content)
-                _el_chars += len(text)
-                made = True
-            else:
-                print(f"   ⚠️ ElevenLabs {r.status_code}: {r.text[:100]} — using free voice")
-        except Exception as e:
-            print(f"   ⚠️ ElevenLabs failed ({e}) — using free voice")
-    if not made:
-        asyncio.run(edge_tts.Communicate(text, VOICE, rate=SPEAKING_RATE).save(raw))
+    asyncio.run(edge_tts.Communicate(text, VOICE, rate=SPEAKING_RATE).save(raw))
     subprocess.run(["ffmpeg", "-y", "-i", raw, "-ar", "24000", "-ac", "1", "-b:a", "48k", path],
                    check=True, capture_output=True)
     try:
@@ -285,44 +281,6 @@ def save_posted(links, sha):
         print(f"⚠️ history save failed: {e}")
 
 
-def load_usage():
-    month = datetime.utcnow().strftime("%Y-%m")
-    default = {"month": month, "long": 0, "short": 0, "_sha": None}
-    if not GH_TOKEN or not GH_REPO:
-        return default
-    try:
-        owner, repo = GH_REPO.split("/")
-        url = f"https://api.github.com/repos/{owner}/{repo}/contents/{USAGE_FILE}"
-        r = requests.get(url, headers=_gh_headers())
-        if r.status_code == 200:
-            d = r.json()
-            data = json.loads(base64.b64decode(d["content"]).decode())
-            data["_sha"] = d["sha"]
-            if data.get("month") != month:
-                data = {"month": month, "long": 0, "short": 0, "_sha": d["sha"]}
-            data.setdefault("long", 0)
-            data.setdefault("short", 0)
-            return data
-    except Exception as e:
-        print(f"⚠️ usage load failed: {e}")
-    return default
-
-
-def save_usage(u):
-    if not GH_TOKEN or not GH_REPO:
-        return
-    try:
-        owner, repo = GH_REPO.split("/")
-        url = f"https://api.github.com/repos/{owner}/{repo}/contents/{USAGE_FILE}"
-        sha = u.get("_sha")
-        body = {"month": u["month"], "long": u.get("long", 0), "short": u.get("short", 0)}
-        content = base64.b64encode(json.dumps(body, indent=2).encode()).decode()
-        payload = {"message": "Update ElevenLabs usage", "content": content}
-        if sha:
-            payload["sha"] = sha
-        requests.put(url, headers=_gh_headers(), json=payload)
-    except Exception as e:
-        print(f"⚠️ usage save failed: {e}")
 
 
 def pick_subject(posted_keys):
@@ -340,12 +298,40 @@ def generate_script(subject):
     topic, base_q = subject["topic"], subject["topic_query"]
     fb = {
         "title": f"The Complete Story of {topic}",
-        "intro": f"{topic} is one of the most fascinating subjects in all of space.",
-        "chapters": [{
-            "heading": topic,
-            "beats": [{"say": f"{topic} continues to amaze scientists.", "query": base_q}],
-        }],
-        "outro": "Subscribe for more deep dives into space and science.",
+        "intro": f"{topic} is one of the most fascinating subjects in all of space. Scientists have spent decades trying to understand it.",
+        "chapters": [
+            {"heading": "The Basics", "beats": [
+                {"say": f"Let's start with what we actually know about {topic}.", "query": base_q},
+                {"say": f"The first observations of {topic} changed everything we thought we knew.", "query": base_q},
+                {"say": "Scientists were stunned by what they found.", "query": "telescope"},
+                {"say": "This discovery opened up entirely new fields of research.", "query": "space research"},
+            ]},
+            {"heading": "The Science", "beats": [
+                {"say": f"The physics behind {topic} are mind-bending.", "query": base_q},
+                {"say": "The forces involved are almost impossible to comprehend.", "query": "universe"},
+                {"say": "Even our most powerful computers struggle to simulate what happens.", "query": "space technology"},
+                {"say": "But recent breakthroughs have given us new answers.", "query": "telescope"},
+            ]},
+            {"heading": "Key Discoveries", "beats": [
+                {"say": f"In the last decade, our understanding of {topic} has been transformed.", "query": base_q},
+                {"say": "New telescopes and space missions revealed secrets hidden for billions of years.", "query": "spacecraft"},
+                {"say": "Each discovery raised even more questions.", "query": "galaxy"},
+                {"say": "The answers are rewriting textbooks around the world.", "query": "space research"},
+            ]},
+            {"heading": "The Mystery", "beats": [
+                {"say": f"But there is still so much about {topic} we do not understand.", "query": base_q},
+                {"say": "Some of the biggest mysteries in science remain unsolved.", "query": "deep space"},
+                {"say": "Theories that seemed certain are now being questioned.", "query": "universe"},
+                {"say": "What we discover next could change everything.", "query": "telescope"},
+            ]},
+            {"heading": "The Future", "beats": [
+                {"say": f"Upcoming missions will finally answer our biggest questions about {topic}.", "query": "rocket launch"},
+                {"say": "New technology is making the impossible possible.", "query": "space station"},
+                {"say": "The next generation of scientists will take us even further.", "query": "spacecraft"},
+                {"say": "What they find might be the most important discovery in human history.", "query": "universe"},
+            ]},
+        ],
+        "outro": "If you found this fascinating, subscribe — the next deep dive will blow your mind.",
     }
     if not OPENAI_API_KEY:
         return fb
@@ -358,16 +344,17 @@ def generate_script(subject):
                     "You write accurate, engaging long-form YouTube narration about space & science. "
                     "CRITICAL: everything must be TRUE, well-established science — never invent, exaggerate, or "
                     "state anything uncertain as fact. If unsure, use a safer well-known point. "
-                    "Write a 3-4 minute deep-dive (about 550-650 words total of spoken narration). "
-                    "Open with a strong hook (no greetings). "
+                    "Write an 8-10 minute deep-dive (about 1200-1500 words total of spoken narration). "
+                    "Open with a POWERFUL hook that makes people stay — a shocking fact, a scary scenario, "
+                    "or a question that demands an answer. NO greetings, NO 'welcome back'. "
                     "Respond ONLY with valid JSON: "
                     '{"title":"...","intro":"...","chapters":[{"heading":"...","beats":[{"say":"...","query":"..."}]}],"outro":"..."}. '
-                    f"chapters: EXACTLY {NUM_CHAPTERS}, each with a short heading (2-4 words) and 3-4 beats. "
-                    "Each beat: say = one spoken sentence (max ~22 words); query = 1-2 word concrete space "
-                    "stock-video term (e.g. 'galaxy','black hole','rocket','nebula'). "
-                    "intro and outro are single spoken sentences. "
-                    "title: honest, curiosity-driven, no #Shorts, no misleading claims. "
-                    "No emojis/hashtags in narration, no URLs."
+                    f"chapters: EXACTLY {NUM_CHAPTERS}, each with a short heading (2-4 words) and 4-5 beats. "
+                    "Each beat: say = one spoken sentence (15-25 words, vivid and dramatic); "
+                    "query = 1-2 word concrete space stock-video term (e.g. 'galaxy','black hole','rocket','nebula'). "
+                    "intro is 2-3 punchy sentences. outro is a single sentence teasing the next topic. "
+                    "title: clickable, curiosity-driven, under 60 chars — use 'What If', numbers, or mystery. "
+                    "No emojis/hashtags in narration, no URLs. Make people NEED to watch till the end."
                 )},
                 {"role": "user", "content": f"Subject: {topic}"},
             ]},
@@ -386,7 +373,7 @@ def generate_script(subject):
                         beats.append({"say": say, "query": str(b.get("query", base_q)).strip() or base_q})
                 if beats and c.get("heading"):
                     chapters.append({"heading": str(c["heading"]).strip(), "beats": beats})
-            if d.get("title") and d.get("intro") and len(chapters) >= 3 and d.get("outro"):
+            if d.get("title") and d.get("intro") and len(chapters) >= 5 and d.get("outro"):
                 print(f"✅ Script ready — {len(chapters)} chapters.")
                 return {"title": d["title"].strip(), "intro": d["intro"].strip(),
                         "chapters": chapters[:NUM_CHAPTERS], "outro": d["outro"].strip()}
@@ -446,7 +433,6 @@ def _vgrad_rgb(top, bottom):
 def make_intro_overlay(topic, path):
     ov = _scrim()
     draw = ImageDraw.Draw(ov)
-    _brandmark(ov)
     kf = _font(60)
     tf = _font(150)
     lines = _wrap(draw, topic.upper(), tf, W - 300)
@@ -466,7 +452,6 @@ def make_intro_overlay(topic, path):
 def make_chapter_overlay(n, heading, path):
     ov = _scrim()
     draw = ImageDraw.Draw(ov)
-    _brandmark(ov)
     cf = _font(56)
     hf = _font(120)
     lines = _wrap(draw, heading.upper(), hf, W - 240)
@@ -495,7 +480,6 @@ def make_beat_overlay(text, path):
         band.putpixel((0, y), (0, 0, 0, a))
     ov = Image.alpha_composite(ov, band.resize((W, H)))
     draw = ImageDraw.Draw(ov)
-    _brandmark(ov)
     bf = _font(64)
     lines = _wrap(draw, text, bf, W - 260)[:3]
     line_h = bf.size + 14
@@ -512,7 +496,6 @@ def make_beat_overlay(text, path):
 def make_outro_overlay(path):
     ov = _scrim()
     draw = ImageDraw.Draw(ov)
-    _brandmark(ov)
     bf, sf = _font(130), _font(56)
     lines = _wrap(draw, "SUBSCRIBE FOR MORE", bf, W - 240)
     block = (bf.size + 10) * len(lines) + 40 + sf.size
@@ -640,9 +623,6 @@ def main():
     os.makedirs(CLIP_DIR, exist_ok=True)
 
     posted, sha = load_posted()
-    usage = load_usage()
-    if ELEVENLABS_API_KEY:
-        print(f"🎙️ ElevenLabs ON for this deep-dive (month long total {usage.get('long', 0)} chars)")
     subject = pick_topic(set(posted))
     script = generate_script(subject)
     topic = subject["topic"]
@@ -689,10 +669,7 @@ def main():
         posted.append(subject["key"])
         save_posted(posted, sha)
 
-    if _el_chars > 0:
-        usage["long"] = usage.get("long", 0) + _el_chars
-        save_usage(usage)
-        print(f"🧾 ElevenLabs: +{_el_chars} chars (long total {usage['long']} this month)")
+    print("✅ Done!")
 
 
 if __name__ == "__main__":
