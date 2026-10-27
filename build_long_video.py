@@ -43,6 +43,15 @@ POSTED_FILE = "posted_longform.json"
 
 LOGO_FILE = "logo.png"   # optional: commit your logo to the repo root
 
+# Voice: ElevenLabs (dramatic) when free tier available, else edge-tts fallback.
+ELEVENLABS_API_KEY = os.environ.get("ELEVENLABS_API_KEY")
+ELEVENLABS_VOICE_ID = os.environ.get("ELEVENLABS_VOICE_ID", "pNInz6obpgDQGcFmaJgB")  # 'Adam' (deep)
+ELEVENLABS_MODEL = "eleven_turbo_v2"
+USAGE_FILE = "el_usage.json"
+LONG_EL_CAP = 8000                     # monthly ElevenLabs char budget for long videos
+IS_LONGFORM = True
+_el_run_enabled = False
+_el_chars = 0
 VOICE = "en-GB-RyanNeural"   # free British documentary storyteller
 SPEAKING_RATE = "+0%"        # natural pace for long-form (slower = more watch time)
 
@@ -163,10 +172,52 @@ def _brandmark(ov):
         _shadow(draw, (60, 54), BRAND, _font(44), WHITE)
 
 
+FALLBACK_VOICES = [VOICE, "en-GB-SoniaNeural", "en-US-GuyNeural", "en-US-ChristopherNeural"]
+
+
+def _edge_tts_with_retry(text, raw):
+    """Try multiple edge-tts voices with retries. Returns True on success."""
+    for voice in FALLBACK_VOICES:
+        for attempt in range(3):
+            try:
+                asyncio.run(edge_tts.Communicate(text, voice, rate=SPEAKING_RATE).save(raw))
+                if voice != VOICE:
+                    print(f"   ℹ️ Used fallback voice {voice} (primary {VOICE} unavailable)")
+                return True
+            except Exception as e:
+                print(f"   ⚠️ edge-tts {voice} attempt {attempt+1}/3 failed: {e}")
+                time.sleep(2)
+    return False
+
+
 def synth_segment(text, path):
-    """Free edge-tts voice — no paid API needed."""
+    """Synthesize one segment: ElevenLabs if available & budget allows, else
+    free edge-tts with retry across multiple voices.
+    Normalizes to 24kHz mono mp3 so all segments concat cleanly."""
+    global _el_chars
     raw = path + ".raw.mp3"
-    asyncio.run(edge_tts.Communicate(text, VOICE, rate=SPEAKING_RATE).save(raw))
+    made = False
+    if _el_run_enabled and ELEVENLABS_API_KEY:
+        try:
+            r = requests.post(
+                f"https://api.elevenlabs.io/v1/text-to-speech/{ELEVENLABS_VOICE_ID}",
+                headers={"xi-api-key": ELEVENLABS_API_KEY, "Content-Type": "application/json"},
+                json={"text": text, "model_id": ELEVENLABS_MODEL,
+                      "voice_settings": {"stability": 0.4, "similarity_boost": 0.75, "style": 0.3}},
+                timeout=60,
+            )
+            if r.status_code == 200 and r.content:
+                with open(raw, "wb") as f:
+                    f.write(r.content)
+                _el_chars += len(text)
+                made = True
+            else:
+                print(f"   ⚠️ ElevenLabs {r.status_code}: {r.text[:100]} — using free voice")
+        except Exception as e:
+            print(f"   ⚠️ ElevenLabs failed ({e}) — using free voice")
+    if not made:
+        if not _edge_tts_with_retry(text, raw):
+            raise RuntimeError("All voices failed (ElevenLabs + all edge-tts fallbacks)")
     subprocess.run(["ffmpeg", "-y", "-i", raw, "-ar", "24000", "-ac", "1", "-b:a", "48k", path],
                    check=True, capture_output=True)
     try:
@@ -281,6 +332,45 @@ def save_posted(links, sha):
         print(f"⚠️ history save failed: {e}")
 
 
+# ---------- Shared monthly ElevenLabs usage budget ----------
+def load_usage():
+    month = datetime.utcnow().strftime("%Y-%m")
+    default = {"month": month, "long": 0, "short": 0, "_sha": None}
+    if not GH_TOKEN or not GH_REPO:
+        return default
+    try:
+        owner, repo = GH_REPO.split("/")
+        url = f"https://api.github.com/repos/{owner}/{repo}/contents/{USAGE_FILE}"
+        r = requests.get(url, headers=_gh_headers())
+        if r.status_code == 200:
+            d = r.json()
+            data = json.loads(base64.b64decode(d["content"]).decode())
+            data["_sha"] = d["sha"]
+            if data.get("month") != month:
+                data = {"month": month, "long": 0, "short": 0, "_sha": d["sha"]}
+            data.setdefault("long", 0)
+            data.setdefault("short", 0)
+            return data
+    except Exception as e:
+        print(f"⚠️ usage load failed: {e}")
+    return default
+
+
+def save_usage(u):
+    if not GH_TOKEN or not GH_REPO:
+        return
+    try:
+        owner, repo = GH_REPO.split("/")
+        url = f"https://api.github.com/repos/{owner}/{repo}/contents/{USAGE_FILE}"
+        sha = u.get("_sha")
+        body = {"month": u["month"], "long": u.get("long", 0), "short": u.get("short", 0)}
+        content = base64.b64encode(json.dumps(body, indent=2).encode()).decode()
+        payload = {"message": "Update ElevenLabs usage", "content": content}
+        if sha:
+            payload["sha"] = sha
+        requests.put(url, headers=_gh_headers(), json=payload)
+    except Exception as e:
+        print(f"⚠️ usage save failed: {e}")
 
 
 def pick_subject(posted_keys):
@@ -623,6 +713,19 @@ def main():
     os.makedirs(CLIP_DIR, exist_ok=True)
 
     posted, sha = load_posted()
+
+    # ElevenLabs budget: use the dramatic voice while free tier lasts,
+    # then fall back to edge-tts.
+    global _el_run_enabled
+    usage = load_usage()
+    if ELEVENLABS_API_KEY and usage.get("long", 0) < LONG_EL_CAP:
+        _el_run_enabled = True
+        print(f"🎙️ ElevenLabs ON for this video (Long used {usage['long']}/{LONG_EL_CAP} chars this month)")
+    else:
+        _el_run_enabled = False
+        if ELEVENLABS_API_KEY:
+            print(f"🎙️ Long ElevenLabs budget spent ({usage['long']}/{LONG_EL_CAP}) — using free voice")
+
     subject = pick_topic(set(posted))
     script = generate_script(subject)
     topic = subject["topic"]
@@ -668,6 +771,12 @@ def main():
     if ok:
         posted.append(subject["key"])
         save_posted(posted, sha)
+
+    # Record any ElevenLabs characters spent this run.
+    if _el_chars > 0:
+        usage["long"] = usage.get("long", 0) + _el_chars
+        save_usage(usage)
+        print(f"🧾 ElevenLabs: +{_el_chars} chars (Long total {usage['long']}/{LONG_EL_CAP})")
 
     print("✅ Done!")
 
