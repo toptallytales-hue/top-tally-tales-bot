@@ -42,7 +42,7 @@ POSTED_FILE = "posted_shorts.json"
 BRAND = "TOP SPACE TALES"
 LOGO_FILE = "logo.png"   # optional: commit your logo to the repo root to use it as the watermark
 
-# Voice: ElevenLabs (dramatic) when a key is set, else a better free edge-tts voice.
+# Voice: ElevenLabs (dramatic) when free tier available, else edge-tts fallback.
 ELEVENLABS_API_KEY = os.environ.get("ELEVENLABS_API_KEY")
 ELEVENLABS_VOICE_ID = os.environ.get("ELEVENLABS_VOICE_ID", "pNInz6obpgDQGcFmaJgB")  # 'Adam' (deep)
 ELEVENLABS_MODEL = "eleven_turbo_v2"   # cheaper on the free tier
@@ -187,8 +187,27 @@ def _brandmark(ov):
         _shadow_text(draw, (44, 70), BRAND, _font(42), WHITE)
 
 
+FALLBACK_VOICES = [VOICE, "en-GB-SoniaNeural", "en-US-GuyNeural", "en-US-ChristopherNeural"]
+
+
+def _edge_tts_with_retry(text, raw):
+    """Try multiple edge-tts voices with retries. Returns True on success."""
+    for voice in FALLBACK_VOICES:
+        for attempt in range(3):
+            try:
+                asyncio.run(edge_tts.Communicate(text, voice, rate=SPEAKING_RATE).save(raw))
+                if voice != VOICE:
+                    print(f"   ℹ️ Used fallback voice {voice} (primary {VOICE} unavailable)")
+                return True
+            except Exception as e:
+                print(f"   ⚠️ edge-tts {voice} attempt {attempt+1}/3 failed: {e}")
+                time.sleep(2)
+    return False
+
+
 def synth_segment(text, path):
-    """Synthesize one segment: ElevenLabs if available, else free edge-tts.
+    """Synthesize one segment: ElevenLabs if available & budget allows, else
+    free edge-tts with retry across multiple voices.
     Normalizes to 24kHz mono mp3 so all segments concat cleanly."""
     global _el_chars
     raw = path + ".raw.mp3"
@@ -212,7 +231,8 @@ def synth_segment(text, path):
         except Exception as e:
             print(f"   ⚠️ ElevenLabs failed ({e}) — using free voice")
     if not made:
-        asyncio.run(edge_tts.Communicate(text, VOICE, rate=SPEAKING_RATE).save(raw))
+        if not _edge_tts_with_retry(text, raw):
+            raise RuntimeError("All voices failed (ElevenLabs + all edge-tts fallbacks)")
     # Normalize format for clean concat
     subprocess.run(["ffmpeg", "-y", "-i", raw, "-ar", "24000", "-ac", "1", "-b:a", "48k", path],
                    check=True, capture_output=True)
@@ -402,7 +422,7 @@ def load_usage():
             d = r.json()
             data = json.loads(base64.b64decode(d["content"]).decode())
             data["_sha"] = d["sha"]
-            if data.get("month") != month:      # new month -> reset counters
+            if data.get("month") != month:
                 data = {"month": month, "long": 0, "short": 0, "_sha": d["sha"]}
             data.setdefault("long", 0)
             data.setdefault("short", 0)
@@ -427,6 +447,8 @@ def save_usage(u):
         requests.put(url, headers=_gh_headers(), json=payload)
     except Exception as e:
         print(f"⚠️ usage save failed: {e}")
+
+
 # Each format: how many beats, the card style, the hook kicker/subtitle, and the
 # extra instruction that shapes the GPT script. Every format demands TRUE facts.
 FORMATS = {
@@ -790,8 +812,8 @@ def main():
     posted, sha = load_posted()
     posted_keys = set(posted)
 
-    # ElevenLabs budget: Shorts use the dramatic voice only until the monthly
-    # Shorts cap is reached; then they fall back to the free voice.
+    # ElevenLabs budget: use the dramatic voice while free tier lasts,
+    # then fall back to edge-tts.
     global _el_run_enabled
     usage = load_usage()
     if ELEVENLABS_API_KEY and usage.get("short", 0) < SHORTS_EL_CAP:
