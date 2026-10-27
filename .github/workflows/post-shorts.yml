@@ -1,11 +1,15 @@
 name: "TopTallyTales Short"
 
+permissions:
+  contents: write
+
 on:
   workflow_dispatch:
 
 jobs:
   short:
     runs-on: ubuntu-24.04
+    environment: top-tally-tales-bot
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
